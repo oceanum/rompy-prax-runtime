@@ -23,7 +23,7 @@ def candidate(owner, repository, commit, credential_secret, *, mode="serial"):
     if not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Pin an exact Git commit, not a moving branch.")
     if not re.fullmatch(r"[a-z][a-z0-9-]{2,31}", credential_secret):
-        raise ValueError("Explicit existing user-secret binding required.")
+        raise ValueError("Explicit existing native secret binding required.")
     if mode not in ("serial", "mpi"):
         raise ValueError("Only serial or single-node MPI proposal supported.")
     launcher = (
@@ -49,7 +49,7 @@ def candidate(owner, repository, commit, credential_secret, *, mode="serial"):
                 }
             ],
             "inputs": {
-                "parameters": [{"name": "handoff_json", "env": "ROMPY_HANDOFF_JSON"}]
+                "parameters": [{"name": "handoff-json", "env": "ROMPY_HANDOFF_JSON"}]
             },
             "outputs": {
                 "artifacts": [
@@ -108,7 +108,7 @@ def candidate(owner, repository, commit, credential_secret, *, mode="serial"):
                     "name": "rompy-runtime",
                     "sourceRef": {"name": "runtime-source", "ref": commit},
                     "dockerfile": "runtime/Dockerfile",
-                    "resources": resources(1, "2Gi"),
+                    "resources": resources(1, "4Gi"),
                 }
             ],
             "tasks": tasks,
@@ -118,7 +118,7 @@ def candidate(owner, repository, commit, credential_secret, *, mode="serial"):
                     "timeout": 360,
                     "arguments": {
                         "parameters": [
-                            {"name": "handoff_json", "value": "", "overridable": True}
+                            {"name": "handoff-json", "value": "", "overridable": True}
                         ]
                     },
                     "steps": [
@@ -129,8 +129,8 @@ def candidate(owner, repository, commit, credential_secret, *, mode="serial"):
                                 "arguments": {
                                     "parameters": [
                                         {
-                                            "name": "handoff_json",
-                                            "value": "{{ workflow.parameters.handoff_json }}",
+                                            "name": "handoff-json",
+                                            "value": "{{ workflow.parameters.handoff-json }}",
                                         }
                                     ]
                                 },

@@ -6,7 +6,7 @@ This repository separates runtime execution from the frontend workbench and conf
 
 | Phase | Image | Resources | Datamesh credential |
 |---|---|---|---|
-| Generate | This Python/rompy image, selected through PRAX `buildRef` | 1 requested/limited CPU, 1Gi memory | Existing scoped development user-secret binding, generation only |
+| Generate | This Python/rompy image, selected through PRAX `buildRef` | 1 requested/limited CPU, 1Gi memory | Approved scoped development native `secretRef` binding, generation only |
 | SWAN | Unchanged `ghcr.io/rom-py/swan@sha256:17dd749381bdf4bfd1f5c717b2f4a07b3d740a125ca12d4b64db23963a4d6dc2` | Serial: 1 CPU; proposed single-node MPI: 4 CPUs; 512Mi | None; task refuses an unexpected Datamesh token |
 | Verify | Same Python image as generation | 1 CPU, 512Mi | None |
 
@@ -54,7 +54,11 @@ PYTHONPATH=src python -m rompy_prax_runtime.specification \
 
 Both project and stage are inactive. No triggers are created. This command does not call PRAX, build an image, deploy or submit a run. `--mode mpi` describes a separate four-process, single-node proposal, not a proven execution mode. Source publication/access, credential binding, artifact repository retention and actual task workspace permissions remain prerequisites.
 
-The pipeline's `handoff_json` parameter must be a **serialized JSON string**, not a nested object that the current PRAX API would stringify as a Python representation. The published pipeline CLI accepts a JSON `--parameters` object; do not invent `@file` expansion support. Configuration content transferred as parameters/artifacts is subject to PRAX visibility/retention. Credentials never belong in the handoff or workflow parameters.
+The pipeline's `handoff-json` parameter must be a **serialized JSON string**, not a nested object that the current PRAX API would stringify as a Python representation. The published pipeline CLI accepts a JSON `--parameters` object; do not invent `@file` expansion support. Configuration content transferred as parameters/artifacts is subject to PRAX visibility/retention. Credentials never belong in the handoff or workflow parameters.
+
+Use the CRD-compatible parameter name `handoff-json` throughout task inputs, pipeline declarations and argument bindings; underscores are rejected by the live Kubernetes CRD even if server validation accepts them. The generation container still receives `ROMPY_HANDOFF_JSON`. Pin the concrete target with canonical `orgRef`; do not rely on the CLI login's active organisation for inventory or deployment targeting.
+
+The image-build budget is 1 CPU / 4Gi memory, separately from task runtime limits. A real PRAX/Kaniko build installed the locked packages successfully but was OOM-killed during full-filesystem snapshotting at 2Gi; the 4Gi build succeeded. This is build evidence, not a staged model-run claim.
 
 ## Local verification
 

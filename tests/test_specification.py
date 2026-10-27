@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import shlex
 
 import pytest
@@ -47,6 +48,28 @@ def test_separate_images_cores_credential_and_artifact_handoffs():
         assert artifact["stepRef"] == {"name": previous, "artifactRef": "workspace"}
         assert artifact["path"] == "/work/run"
     assert resources["builds"][0]["sourceRef"]["ref"] == "a" * 40
+    assert resources["builds"][0]["resources"] == {
+        "requests": {"cpu": "1", "memory": "4Gi"},
+        "limits": {"cpu": "1", "memory": "4Gi"},
+    }
+
+
+@pytest.mark.parametrize("mode", ["serial", "mpi"])
+def test_parameter_wiring_uses_crd_compatible_names_without_changing_env(mode):
+    resources = spec(mode)["resources"]
+    parameter = resources["tasks"][0]["inputs"]["parameters"][0]
+    pipeline = resources["pipelines"][0]
+    declared = pipeline["arguments"]["parameters"][0]
+    argument = pipeline["steps"][0][0]["arguments"]["parameters"][0]
+    pattern = re.compile(
+        r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+    )
+    for item in (parameter, declared, argument):
+        assert item["name"] == "handoff-json"
+        assert pattern.fullmatch(item["name"])
+    assert not pattern.fullmatch("handoff_json")
+    assert parameter["env"] == "ROMPY_HANDOFF_JSON"
+    assert argument["value"] == "{{ workflow.parameters.handoff-json }}"
 
 
 def test_canonical_secret_reference_contract_rejects_legacy_user_secret_alias():
