@@ -32,7 +32,7 @@ def candidate(owner, repository, commit, credential_secret, *, mode="serial"):
         else "/usr/bin/mpirun -np 4 /usr/local/bin/swan.exe"
     )
     shell = (
-        "set -eu; if [ \"${DATAMESH_TOKEN+x}\" = x ]; then echo 'Unexpected Datamesh credential in model task' >&2; exit 64; fi; cd /work/run; sha256sum -c native-inputs.sha256; cd examples/example_declarative/run1; exec "
+        "set -eu; if [ \"${DATAMESH_TOKEN+x}\" = x ]; then echo 'Unexpected Datamesh credential in model task'; exit 64; fi; cd /work/run; sha256sum -c native-inputs.sha256; cd examples/example_declarative/run1; exec "
         + launcher
     )
     tasks = [

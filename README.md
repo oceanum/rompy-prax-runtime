@@ -60,6 +60,8 @@ Use the CRD-compatible parameter name `handoff-json` throughout task inputs, pip
 
 The image-build budget is 1 CPU / 4Gi memory, separately from task runtime limits. A real PRAX/Kaniko build installed the locked packages successfully but was OOM-killed during full-filesystem snapshotting at 2Gi; the 4Gi build succeeded. This is build evidence, not a staged model-run claim.
 
+The model wrapper's credential guard emits only a fixed diagnostic to stdout and exits 64; it never prints a credential value. Avoiding a nonessential `>&2` redirection keeps this definition in the JSON-encoding subset shared by the currently deployed PRAX controllers. A live check found differing HTML escaping in their fingerprint calculations. No stored fingerprint, readiness flag or integrity check is overridden; a general canonicalization repair belongs in PRAX, separately from this proof.
+
 ## Local verification
 
 The local gate passes **26 tests** and Ruff. Tests use mocked generation/model outputs; no actual generation or model execution occurs. `examples/inactive-serial.fixture.yml` and `examples/inactive-mpi.fixture.yml` are offline review fixtures with explicitly synthetic source/commit/secret names, not deployable targets.

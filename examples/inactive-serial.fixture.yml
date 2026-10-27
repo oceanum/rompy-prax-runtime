@@ -62,7 +62,7 @@ resources:
     image: 
       ghcr.io/rom-py/swan@sha256:17dd749381bdf4bfd1f5c717b2f4a07b3d740a125ca12d4b64db23963a4d6dc2
     command: bash -c 'set -eu; if [ "${DATAMESH_TOKEN+x}" = x ]; then echo 
-      '"'"'Unexpected Datamesh credential in model task'"'"' >&2; exit 64; fi; 
+      '"'"'Unexpected Datamesh credential in model task'"'"'; exit 64; fi;
       cd /work/run; sha256sum -c native-inputs.sha256; cd 
       examples/example_declarative/run1; exec /usr/local/bin/swan-serial'
     timeout: 120

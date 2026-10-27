@@ -72,6 +72,17 @@ def test_parameter_wiring_uses_crd_compatible_names_without_changing_env(mode):
     assert argument["value"] == "{{ workflow.parameters.handoff-json }}"
 
 
+@pytest.mark.parametrize("mode", ["serial", "mpi"])
+def test_fixed_status_guard_keeps_portable_hashes_equivalent(mode):
+    command = shlex.split(spec(mode)["resources"]["tasks"][1]["command"])[2]
+    assert "${DATAMESH_TOKEN+x}" in command
+    assert "Unexpected Datamesh credential in model task" in command
+    assert "exit 64" in command
+    # PRAX currently hashes HTML-sensitive JSON characters differently across
+    # controllers. No redirection is needed for this fixed, value-free message.
+    assert not any(character in command for character in "&<>\u2028\u2029")
+
+
 def test_canonical_secret_reference_contract_rejects_legacy_user_secret_alias():
     env = spec()["resources"]["tasks"][0]["env"]
     refs = environment_secret_references(env, "generate.env")
