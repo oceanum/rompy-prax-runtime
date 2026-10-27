@@ -64,6 +64,8 @@ The model wrapper's credential guard emits only a fixed diagnostic to stdout and
 
 The sequential artifact graph uses `dag` with explicit `generate → swan → verify` dependencies. The deployed PRAX translator renders `stepRef.artifactRef` using Argo's `tasks.*` context, which belongs to DAGs; a steps-form workflow was rejected by Argo before any pod ran. Do not confuse successful PRAX admission with native Argo spec acceptance.
 
+After all generation and credential checks pass, the private preparing workspace normalizes artifact files to `0644` (`0755` for executable files) and directories to `0755` before atomic publication. This permits the non-root verifier to read archives restored under another UID. The first real staged serial run produced reference-matching outputs, but its remote verification failed on root-owned `0600` `generate_result.json`; host verification passed. The permission repair does not change file bytes, source hashes or scientific inputs, does not modify the retained cloud artifact, and does not retroactively make that failed workflow successful.
+
 ## Local verification
 
 The local gate passes **26 tests** and Ruff. Tests use mocked generation/model outputs; no actual generation or model execution occurs. `examples/inactive-serial.fixture.yml` and `examples/inactive-mpi.fixture.yml` are offline review fixtures with explicitly synthetic source/commit/secret names, not deployable targets.

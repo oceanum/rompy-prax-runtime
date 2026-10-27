@@ -90,6 +90,15 @@ def fake_generator(monkeypatch, handoff, behavior="good"):
                 content = str(Path.cwd().parent).encode()
             (self.staging_dir / "INPUT").write_bytes(content)
             (self.staging_dir / "bottom.bot").write_bytes(b"native data")
+            if behavior == "private_metadata":
+                metadata_file = self.staging_dir / "generate_result.json"
+                metadata_file.write_bytes(b'{"success":true}')
+                metadata_file.chmod(0o600)
+                private_directory = self.staging_dir / "private"
+                private_directory.mkdir(mode=0o700)
+                executable = private_directory / "helper.sh"
+                executable.write_bytes(b"#!/bin/sh\nexit 0\n")
+                executable.chmod(0o700)
             if behavior == "stale":
                 (self.staging_dir / "swangrid.nc").write_bytes(b"stale")
             return SimpleNamespace(success=behavior != "failed")
@@ -128,6 +137,37 @@ def test_generation_publishes_complete_workspace_only_after_checks(
     for name, sha in native.items():
         assert stages.digest((output / name).read_bytes()) == sha
     assert not list(tmp_path.glob("rompy-preparing-*"))
+
+
+def test_publication_normalizes_checked_private_metadata_without_changing_bytes(
+    monkeypatch, handoff, tmp_path
+):
+    fake_generator(monkeypatch, handoff, "private_metadata")
+    output = tmp_path / "run"
+    stages.generate(raw(handoff), output)
+    metadata = output / stages.STAGING / "generate_result.json"
+    executable = output / stages.STAGING / "private/helper.sh"
+    assert metadata.read_bytes() == b'{"success":true}'
+    assert metadata.stat().st_mode & 0o777 == 0o644
+    assert executable.stat().st_mode & 0o777 == 0o755
+    assert executable.parent.stat().st_mode & 0o777 == 0o755
+    native = json.loads((output / "evidence/native-inputs.json").read_bytes())
+    for name, expected in native.items():
+        assert stages.digest((output / name).read_bytes()) == expected
+
+
+def test_sensitive_workspace_never_reaches_permission_normalization(
+    monkeypatch, handoff, tmp_path
+):
+    fake_generator(monkeypatch, handoff, "secret")
+    called = []
+    monkeypatch.setattr(
+        stages, "_portable_artifact_modes", lambda _: called.append(True)
+    )
+    with pytest.raises(stages.StageError, match="credential_in_workspace"):
+        stages.generate(raw(handoff), tmp_path / "run")
+    assert not called
+    assert not (tmp_path / "run").exists()
 
 
 @pytest.mark.parametrize(

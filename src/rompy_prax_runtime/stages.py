@@ -266,6 +266,16 @@ def native_hashes(root):
     }
 
 
+def _portable_artifact_modes(root):
+    """Make a credential-checked workspace readable after archive UID changes."""
+    for path in tree(root):
+        executable = bool(path.stat().st_mode & 0o111)
+        path.chmod(0o755 if executable else 0o644)
+    for path in root.rglob("*"):
+        if path.is_dir():
+            path.chmod(0o755)
+
+
 def generate(raw, destination):
     """Only explicit generate entrypoint can access Datamesh; tests must mock it."""
     handoff, document = admit(raw)
@@ -352,6 +362,7 @@ def generate(raw, destination):
             raw_file = path.read_bytes()
             if any(pattern in raw_file for pattern in patterns):
                 raise StageError("credential_in_workspace")
+        _portable_artifact_modes(root)
         root.chmod(0o755)
         root.rename(destination)
         return {
