@@ -1,0 +1,11 @@
+**
+!runtime/
+!runtime/Dockerfile
+!runtime/requirements.lock
+!runtime/build-constraints.txt
+!src/
+!src/rompy_prax_runtime/
+!src/rompy_prax_runtime/*.py
+!reference/
+!reference/example-swan.yml
+!reference/manifest.json

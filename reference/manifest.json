@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "purpose": "Development Datamesh execution candidate; no local data assets; not model-smoke verified",
+  "configuration": {
+    "file": "example-swan.yml",
+    "sha256": "998436b3164ccc8f7e971faea57ff8365d58435653db299a7cb8a90e67980a42"
+  },
+  "working_directory": "examples",
+  "staging_directory": "examples/example_declarative/run1",
+  "inputs": [],
+  "datamesh_references": [
+    "gebco_2008",
+    "era5_wind10m"
+  ],
+  "input_identity": "Datasource IDs are mutable references, not immutable input content. Generation captures and hashes the native inputs actually used by SWAN.",
+  "expected_outputs": {
+    "netcdf": [
+      "swangrid.nc",
+      "swanspec.nc"
+    ],
+    "files": [
+      "swantable.txt",
+      "hotfile_20230102T000000.txt"
+    ]
+  },
+  "datamesh_service": "https://datamesh.oceanum.tech"
+}

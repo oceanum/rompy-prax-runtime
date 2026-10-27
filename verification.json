@@ -1,0 +1,35 @@
+{
+  "purpose": "local-staged-runtime-preparation-only",
+  "tests": 26,
+  "python": "3.12.13",
+  "packages": {
+    "rompy": "2.0.0a0",
+    "rompy-swan": "0.11.1",
+    "pydantic": "2.13.5"
+  },
+  "generation_local_image_id": "sha256:eb8df8d509a82f2b9c7e1de10343275308e3ea31c1fe0ec1511d7ac41c5ce8b0",
+  "generation_image_user": "10001:10001",
+  "platform": "linux/amd64",
+  "generation_adapter_sha256": "1ac561456417778ad4aaec4734d42fbac2e59732824d873eb63b89e500d75815",
+  "python_base_index": "sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36",
+  "swan_image": "ghcr.io/rom-py/swan@sha256:17dd749381bdf4bfd1f5c717b2f4a07b3d740a125ca12d4b64db23963a4d6dc2",
+  "swan_serial_mpi_selector_and_launcher_present": true,
+  "actual_cli_handoff_admitted": true,
+  "offline_public_pydantic_preflight_accepted": true,
+  "preflight_network": "none",
+  "preflight_root_filesystem": "read-only",
+  "preflight_tmpfs_bytes": 67108864,
+  "initial_readonly_without_tmp_failed": "Cartopy tempfile initialization; corrected container sandbox, not model code",
+  "prax_run_request_fields": [
+    "parameters",
+    "stage_ref"
+  ],
+  "full_prax_server_validation": false,
+  "source_published": false,
+  "remote_build_deploy_or_run": false,
+  "model_inputs_generated": false,
+  "data_fetched": false,
+  "model_executed": false,
+  "visible_user_credential_references": 0,
+  "scope": "Unit/mock stage safety plus offline real-library configuration preflight. Not staged generation, SWAN/MPI execution, release admission or scientific validity."
+}
