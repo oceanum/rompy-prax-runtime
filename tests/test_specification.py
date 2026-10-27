@@ -4,6 +4,10 @@ import shlex
 import pytest
 from prax.spec import ProjectSpec
 from prax.spec.pipeline import PipelineSpec
+from prax.spec.secret_refs import (
+    environment_secret_references,
+    SecretReferenceShapeError,
+)
 from rompy_prax_runtime.specification import candidate, SWAN_IMAGE
 
 ROOT = Path(__file__).parents[1]
@@ -43,6 +47,27 @@ def test_separate_images_cores_credential_and_artifact_handoffs():
         assert artifact["stepRef"] == {"name": previous, "artifactRef": "workspace"}
         assert artifact["path"] == "/work/run"
     assert resources["builds"][0]["sourceRef"]["ref"] == "a" * 40
+
+
+def test_canonical_secret_reference_contract_rejects_legacy_user_secret_alias():
+    env = spec()["resources"]["tasks"][0]["env"]
+    refs = environment_secret_references(env, "generate.env")
+    assert len(refs) == 1
+    assert (refs[0].name, refs[0].key, refs[0].environment_variable) == (
+        "datamesh-tech",
+        "token",
+        "DATAMESH_TOKEN",
+    )
+    with pytest.raises(SecretReferenceShapeError):
+        environment_secret_references(
+            [
+                {
+                    "name": "DATAMESH_TOKEN",
+                    "userSecretRef": {"name": "datamesh-tech", "key": "token"},
+                }
+            ],
+            "generate.env",
+        )
 
 
 def test_native_serial_and_explicit_single_node_mpi_not_custom_model_runner():

@@ -38,7 +38,7 @@ resources:
         memory: 1Gi
     env:
     - name: DATAMESH_TOKEN
-      userSecretRef:
+      secretRef:
         name: datamesh-tech
         key: token
     inputs:

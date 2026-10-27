@@ -45,7 +45,7 @@ def candidate(owner, repository, commit, credential_secret, *, mode="serial"):
             "env": [
                 {
                     "name": "DATAMESH_TOKEN",
-                    "userSecretRef": {"name": credential_secret, "key": "token"},
+                    "secretRef": {"name": credential_secret, "key": "token"},
                 }
             ],
             "inputs": {

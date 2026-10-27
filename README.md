@@ -14,6 +14,8 @@ The third phase is output verification, not invented scientific postprocessing. 
 
 Workspaces pass through explicit PRAX `stepRef.artifactRef` bindings. There is no PVC, host mount, sudo/tmpfs setup or Docker-in-Docker requirement. Generation builds a private temporary workspace and publishes the declared artifact directory **only after** input manifest, portability and credential checks. Failed generation leaves no declared output path to archive. The model task verifies native-input checksums before running the upstream binary, and verification checks those files again after execution.
 
+Task environment bindings use the current canonical `secretRef: {name, key}` contract; the retired `userSecretRef` selector is rejected by the server. User scope belongs to managed-secret creation/access, not a different task environment field. The candidate's reference names the approved user-scoped secret without embedding its value.
+
 PRAX applies infrastructure retries even when `retryStrategy` is omitted. The candidate explicitly requests on-demand scheduling and one retry restricted to `OnTransientError`, bounded backoff. This is not exactly-once execution, nor permission to retry an unknown submission outcome. Deterministic model/code failures and OOM are not intended to be retried by that policy. Actual deployed behavior still needs verification.
 
 ## Initial configuration admission
