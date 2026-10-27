@@ -62,6 +62,8 @@ The image-build budget is 1 CPU / 4Gi memory, separately from task runtime limit
 
 The model wrapper's credential guard emits only a fixed diagnostic to stdout and exits 64; it never prints a credential value. Avoiding a nonessential `>&2` redirection keeps this definition in the JSON-encoding subset shared by the currently deployed PRAX controllers. A live check found differing HTML escaping in their fingerprint calculations. No stored fingerprint, readiness flag or integrity check is overridden; a general canonicalization repair belongs in PRAX, separately from this proof.
 
+The sequential artifact graph uses `dag` with explicit `generate → swan → verify` dependencies. The deployed PRAX translator renders `stepRef.artifactRef` using Argo's `tasks.*` context, which belongs to DAGs; a steps-form workflow was rejected by Argo before any pod ran. Do not confuse successful PRAX admission with native Argo spec acceptance.
+
 ## Local verification
 
 The local gate passes **26 tests** and Ruff. Tests use mocked generation/model outputs; no actual generation or model execution occurs. `examples/inactive-serial.fixture.yml` and `examples/inactive-mpi.fixture.yml` are offline review fixtures with explicitly synthetic source/commit/secret names, not deployable targets.

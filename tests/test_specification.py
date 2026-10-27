@@ -43,8 +43,12 @@ def test_separate_images_cores_credential_and_artifact_handoffs():
     )  # Failed generation publishes nothing.
     pipeline = resources["pipelines"][0]
     assert "triggers" not in pipeline and "volumes" not in pipeline
-    for current, previous in zip(pipeline["steps"][1:], ("generate", "swan")):
-        artifact = current[0]["arguments"]["artifacts"][0]
+    assert "steps" not in pipeline
+    assert [node["name"] for node in pipeline["dag"]] == ["generate", "swan", "verify"]
+    assert not pipeline["dag"][0].get("dependencies")
+    for current, previous in zip(pipeline["dag"][1:], ("generate", "swan")):
+        assert current["dependencies"] == [previous]
+        artifact = current["arguments"]["artifacts"][0]
         assert artifact["stepRef"] == {"name": previous, "artifactRef": "workspace"}
         assert artifact["path"] == "/work/run"
     assert resources["builds"][0]["sourceRef"]["ref"] == "a" * 40
@@ -60,7 +64,7 @@ def test_parameter_wiring_uses_crd_compatible_names_without_changing_env(mode):
     parameter = resources["tasks"][0]["inputs"]["parameters"][0]
     pipeline = resources["pipelines"][0]
     declared = pipeline["arguments"]["parameters"][0]
-    argument = pipeline["steps"][0][0]["arguments"]["parameters"][0]
+    argument = pipeline["dag"][0]["arguments"]["parameters"][0]
     pattern = re.compile(
         r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
     )
@@ -81,6 +85,16 @@ def test_fixed_status_guard_keeps_portable_hashes_equivalent(mode):
     # PRAX currently hashes HTML-sensitive JSON characters differently across
     # controllers. No redirection is needed for this fixed, value-free message.
     assert not any(character in command for character in "&<>\u2028\u2029")
+
+
+@pytest.mark.parametrize("mode", ["serial", "mpi"])
+def test_inactive_fixture_matches_generated_candidate(mode):
+    from ruamel.yaml import YAML
+
+    fixture = YAML(typ="safe").load(
+        (ROOT / "examples" / f"inactive-{mode}.fixture.yml").read_text()
+    )
+    assert fixture == spec(mode)
 
 
 def test_canonical_secret_reference_contract_rejects_legacy_user_secret_alias():

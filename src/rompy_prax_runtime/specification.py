@@ -121,57 +121,53 @@ def candidate(owner, repository, commit, credential_secret, *, mode="serial"):
                             {"name": "handoff-json", "value": "", "overridable": True}
                         ]
                     },
-                    "steps": [
-                        [
-                            {
-                                "name": "generate",
-                                "taskRef": "generate",
-                                "arguments": {
-                                    "parameters": [
-                                        {
-                                            "name": "handoff-json",
-                                            "value": "{{ workflow.parameters.handoff-json }}",
-                                        }
-                                    ]
-                                },
-                            }
-                        ],
-                        [
-                            {
-                                "name": "swan",
-                                "taskRef": "swan",
-                                "arguments": {
-                                    "artifacts": [
-                                        {
-                                            "name": "workspace",
-                                            "path": "/work/run",
-                                            "stepRef": {
-                                                "name": "generate",
-                                                "artifactRef": "workspace",
-                                            },
-                                        }
-                                    ]
-                                },
-                            }
-                        ],
-                        [
-                            {
-                                "name": "verify",
-                                "taskRef": "verify",
-                                "arguments": {
-                                    "artifacts": [
-                                        {
-                                            "name": "workspace",
-                                            "path": "/work/run",
-                                            "stepRef": {
-                                                "name": "swan",
-                                                "artifactRef": "workspace",
-                                            },
-                                        }
-                                    ]
-                                },
-                            }
-                        ],
+                    "dag": [
+                        {
+                            "name": "generate",
+                            "taskRef": "generate",
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "handoff-json",
+                                        "value": "{{ workflow.parameters.handoff-json }}",
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "name": "swan",
+                            "taskRef": "swan",
+                            "dependencies": ["generate"],
+                            "arguments": {
+                                "artifacts": [
+                                    {
+                                        "name": "workspace",
+                                        "path": "/work/run",
+                                        "stepRef": {
+                                            "name": "generate",
+                                            "artifactRef": "workspace",
+                                        },
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "name": "verify",
+                            "taskRef": "verify",
+                            "dependencies": ["swan"],
+                            "arguments": {
+                                "artifacts": [
+                                    {
+                                        "name": "workspace",
+                                        "path": "/work/run",
+                                        "stepRef": {
+                                            "name": "swan",
+                                            "artifactRef": "workspace",
+                                        },
+                                    }
+                                ]
+                            },
+                        },
                     ],
                 }
             ],

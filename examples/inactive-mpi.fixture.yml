@@ -1,7 +1,7 @@
 # OFFLINE FIXTURE ONLY: synthetic source/commit/secret, not deployable.
 # Render real reviewed bindings; both project and stage must remain inactive until approved.
 name: rompy-staged-smoke
-description: INACTIVE staged reference candidate; build/runtime/admission 
+description: INACTIVE staged reference candidate; build/runtime/admission
   prerequisites require review
 active: false
 resources:
@@ -59,12 +59,12 @@ resources:
         factor: 2
         maxDuration: 10s
   - name: swan
-    image: 
+    image:
       ghcr.io/rom-py/swan@sha256:17dd749381bdf4bfd1f5c717b2f4a07b3d740a125ca12d4b64db23963a4d6dc2
-    command: bash -c 'set -eu; if [ "${DATAMESH_TOKEN+x}" = x ]; then echo 
-      '"'"'Unexpected Datamesh credential in model task'"'"'; exit 64; fi;
-      cd /work/run; sha256sum -c native-inputs.sha256; cd 
-      examples/example_declarative/run1; exec /usr/bin/mpirun -np 4 
+    command: bash -c 'set -eu; if [ "${DATAMESH_TOKEN+x}" = x ]; then echo
+      '"'"'Unexpected Datamesh credential in model task'"'"'; exit 64; fi; cd
+      /work/run; sha256sum -c native-inputs.sha256; cd
+      examples/example_declarative/run1; exec /usr/bin/mpirun -np 4
       /usr/local/bin/swan.exe'
     timeout: 120
     resources:
@@ -126,31 +126,35 @@ resources:
       - name: handoff-json
         value: ''
         overridable: true
-    steps:
-    - - name: generate
-        taskRef: generate
-        arguments:
-          parameters:
-          - name: handoff-json
-            value: '{{ workflow.parameters.handoff-json }}'
-    - - name: swan
-        taskRef: swan
-        arguments:
-          artifacts:
-          - name: workspace
-            path: /work/run
-            stepRef:
-              name: generate
-              artifactRef: workspace
-    - - name: verify
-        taskRef: verify
-        arguments:
-          artifacts:
-          - name: workspace
-            path: /work/run
-            stepRef:
-              name: swan
-              artifactRef: workspace
+    dag:
+    - name: generate
+      taskRef: generate
+      arguments:
+        parameters:
+        - name: handoff-json
+          value: '{{ workflow.parameters.handoff-json }}'
+    - name: swan
+      taskRef: swan
+      dependencies:
+      - generate
+      arguments:
+        artifacts:
+        - name: workspace
+          path: /work/run
+          stepRef:
+            name: generate
+            artifactRef: workspace
+    - name: verify
+      taskRef: verify
+      dependencies:
+      - swan
+      arguments:
+        artifacts:
+        - name: workspace
+          path: /work/run
+          stepRef:
+            name: swan
+            artifactRef: workspace
   stages:
   - name: dev
     active: false
