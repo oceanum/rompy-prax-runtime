@@ -1,6 +1,6 @@
 # ROMPY → SWAN staged PRAX reference (local candidate)
 
-This **local, unpublished** repository separates runtime execution from the frontend workbench and configuration-only `oceanum rompy` plugin. It is not a modelling API, run database or operations CLI. PRAX owns builds, releases, submission, status/logs, retries and artifacts.
+This repository separates runtime execution from the frontend workbench and configuration-only `oceanum rompy` plugin. It is not a modelling API, run database or operations CLI. PRAX owns builds, releases, submission, status/logs, retries and artifacts.
 
 ## Pipeline contract
 
@@ -39,7 +39,7 @@ docker build --platform linux/amd64 -f runtime/Dockerfile \
   -t rompy-prax-runtime:staged-candidate .
 ```
 
-PRAX should ultimately perform this build from an approved reachable repository and exact commit—no separate manual registry-push workflow is required. This local repository currently has no remote/publication/license decision.
+PRAX should ultimately perform this build from an approved reachable repository and exact commit—no separate manual registry-push workflow is required. The approved public source destination is `oceanum/rompy-prax-runtime`, under Apache 2.0. Upstream notices are retained in `third-party/`; this does not relicense the unchanged SWAN image or other dependencies. Reachability and the exact source commit must be verified before a PRAX build.
 
 Render a new inactive candidate after supplying real reviewed bindings (do not invent a source repository or secret):
 

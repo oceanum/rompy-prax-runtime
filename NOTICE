@@ -1,0 +1,24 @@
+ROMPY PRAX runtime
+
+The new adapter code and deployment specification in this repository are
+licensed under the Apache License, Version 2.0; see LICENSE.
+
+The reference configuration is adapted from rompy-swan's
+examples/example_declarative.yml at commit
+f5ed326f6287a9f0f884efd2498d20ee7948c47d.
+The ROMPY core dependency is pinned at commit
+cf80d0d03dddf032bc27282a1f8a1607d69b4184.
+Both upstream projects use Apache License 2.0. Their notices are retained
+without alteration in third-party/rompy-NOTICE and
+third-party/rompy-swan-NOTICE.
+
+Upstream projects and contributor records:
+https://github.com/rom-py/rompy
+https://github.com/rom-py/rompy-swan
+
+This repository does not contain or modify SWAN source or binaries. The
+separate pinned upstream SWAN container retains its upstream licensing,
+including GPL-3.0-or-later, independently of this adapter's license.
+
+Python dependencies and other image components retain their own licenses.
+The root LICENSE does not relicense third-party components.

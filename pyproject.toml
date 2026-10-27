@@ -7,6 +7,8 @@ name = "rompy-prax-runtime"
 version = "0.1.0.dev0"
 description = "Inactive staged PRAX reference pipeline for rompy generation and upstream SWAN"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "third-party/*-NOTICE"]
 requires-python = ">=3.11"
 
 [project.optional-dependencies]

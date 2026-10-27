@@ -21,6 +21,8 @@ RUN uv pip sync --python /opt/rompy/bin/python --require-hashes runtime/requirem
     && rm -rf /root/.cache /tmp/cache /opt/sources
 COPY src/ ./src/
 COPY reference/ ./reference/
+COPY LICENSE NOTICE ./
+COPY third-party/ ./third-party/
 RUN mkdir /work && chown 10001:10001 /work
 USER 10001:10001
 WORKDIR /work

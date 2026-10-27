@@ -9,3 +9,7 @@
 !reference/
 !reference/example-swan.yml
 !reference/manifest.json
+!LICENSE
+!NOTICE
+!third-party/
+!third-party/*-NOTICE
