@@ -131,26 +131,39 @@ def yaml_document(content):
     return parser.load(content)
 
 
+def _input_references(document):
+    grids = document["config"]["inpgrid"]
+    return [
+        {
+            "role": "bottom" if index == 0 else f"input[{index - 1}]",
+            "kind": "datamesh",
+            "datasource": grid["source"]["datasource"],
+            "service": grid["source"]["kwargs"]["service"],
+        }
+        for index, grid in enumerate([grids["bottom"], *grids.get("input", [])])
+    ]
+
+
 def admit(raw):
     """Pure detached source/hash/reference admission; no datasets or model work."""
     try:
         if not isinstance(raw, str) or len(raw.encode()) > 262144:
             raise StageError("handoff_size")
         handoff = json.loads(raw, object_pairs_hook=pairs)
-        if set(handoff) != {
-            "version",
-            "purpose",
-            "configuration",
-            "validation",
-            "input_references",
-            "period",
-            "submission",
-        }:
+        browser = (
+            isinstance(handoff, dict)
+            and handoff.get("purpose") == "rompy-configuration-request"
+        )
+        fields = {"version", "purpose", "configuration"}
+        if not browser:
+            fields |= {"validation", "input_references", "period", "submission"}
+        if not isinstance(handoff, dict) or set(handoff) != fields:
             raise StageError("handoff_shape")
         if (
             type(handoff["version"]) is not int
             or handoff["version"] != 1
-            or handoff["purpose"] != "rompy-configuration-handoff-only"
+            or handoff["purpose"]
+            not in {"rompy-configuration-handoff-only", "rompy-configuration-request"}
         ):
             raise StageError("handoff_version")
         config = handoff["configuration"]
@@ -184,22 +197,12 @@ def admit(raw):
             raise StageError("reference_integrity")
         if not same(document, yaml_document(reference.decode())):
             raise StageError("only_reviewed_reference_supported")
-        references = [
-            {
-                "role": "bottom",
-                "kind": "datamesh",
-                "datasource": "gebco_2008",
-                "service": "https://datamesh.oceanum.tech",
-            },
-            {
-                "role": "input[0]",
-                "kind": "datamesh",
-                "datasource": "era5_wind10m",
-                "service": "https://datamesh.oceanum.tech",
-            },
-        ]
+        # Source-only requests carry no prior Python acceptance claim. Both
+        # formats still pass the same reference/source checks above.
+        if browser:
+            return deepcopy(handoff), deepcopy(document)
         if not same(handoff["period"], document["period"]) or not same(
-            handoff["input_references"], references
+            handoff["input_references"], _input_references(document)
         ):
             raise StageError("handoff_metadata_correlation")
         if (
@@ -276,9 +279,53 @@ def _portable_artifact_modes(root):
             path.chmod(0o755)
 
 
+def _worker_handoff(request, document, facts):
+    """Create truthful provenance only after the worker's Python check passed."""
+    return {
+        "version": 1,
+        "purpose": "rompy-configuration-handoff-only",
+        "configuration": deepcopy(request["configuration"]),
+        "validation": {
+            "status": "accepted",
+            "document_sha256": request["configuration"]["model_json_sha256"],
+            "runtime_id": digest(encoded(facts)),
+            "adapter": "prax-runtime-v1",
+            "runtime": deepcopy(facts),
+            "scope": "Worker public Pydantic acceptance before extraction; not data readiness or scientific validation.",
+        },
+        "input_references": _input_references(document),
+        "period": deepcopy(document["period"]),
+        "submission": {"enabled": False, "owner": "PRAX"},
+    }
+
+
 def generate(raw, destination):
     """Only explicit generate entrypoint can access Datamesh; tests must mock it."""
     handoff, document = admit(raw)
+    browser = handoff["purpose"] == "rompy-configuration-request"
+    facts = runtime()
+    if not browser:
+        reviewed = handoff["validation"].get("runtime", {})
+        if any(
+            reviewed.get(key) != facts[key]
+            for key in ("python", "packages", "sources_sha256")
+        ):
+            raise StageError("reviewed_runtime_mismatch")
+    from pydantic import Field, ValidationError
+    from rompy.model import ModelRun
+    from rompy_swan.config import SwanConfig
+
+    class SwanRun(ModelRun):
+        config: SwanConfig = Field(..., discriminator="model_type")
+
+    try:
+        with pure_validation():
+            model = SwanRun.model_validate(deepcopy(document))
+    except ValidationError:
+        # Pydantic errors may contain the private input. Keep task logs value-free.
+        raise StageError("configuration_validation_failed") from None
+    if browser:
+        handoff = _worker_handoff(handoff, document, facts)
     token = os.environ.get("DATAMESH_TOKEN")
     if not token:
         raise StageError("datamesh_credential_required")
@@ -288,22 +335,6 @@ def generate(raw, destination):
         "DATAMESH_SERVICE", "https://datamesh.oceanum.tech"
     ) != "https://datamesh.oceanum.tech" or os.environ.get("DATAMESH_GATEWAY"):
         raise StageError("datamesh_endpoint_override")
-    facts = runtime()
-    reviewed = handoff["validation"].get("runtime", {})
-    if any(
-        reviewed.get(key) != facts[key]
-        for key in ("python", "packages", "sources_sha256")
-    ):
-        raise StageError("reviewed_runtime_mismatch")
-    from pydantic import Field
-    from rompy.model import ModelRun
-    from rompy_swan.config import SwanConfig
-
-    class SwanRun(ModelRun):
-        config: SwanConfig = Field(..., discriminator="model_type")
-
-    with pure_validation():
-        model = SwanRun.model_validate(document)
     destination = Path(destination).absolute()
     if destination.exists() or destination.is_symlink():
         raise StageError("destination_exists")
@@ -346,7 +377,12 @@ def generate(raw, destination):
             raise StageError("nonportable_generated_control")
         evidence = root / "evidence"
         evidence.mkdir()
-        (evidence / "configuration-handoff.json").write_bytes(raw.encode())
+        if browser:
+            (evidence / "configuration-request.json").write_bytes(raw.encode())
+            handoff_bytes = encoded(handoff)
+        else:
+            handoff_bytes = raw.encode()
+        (evidence / "configuration-handoff.json").write_bytes(handoff_bytes)
         (evidence / "generation-runtime.json").write_bytes(encoded(facts))
         (evidence / "native-inputs.json").write_bytes(encoded(files))
         (root / "native-inputs.sha256").write_text(

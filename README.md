@@ -24,11 +24,37 @@ The initial adapter accepts only the logical values of the preserved `.tech` Dat
 
 Input is the configuration-only plugin's `rompy-configuration-handoff-only` JSON record. The adapter rechecks exact source/model hashes, source↔JSON semantics, supported reference values and validation-document correlation. Generation independently checks Python/package/source identities against the recorded runtime and constructs the real narrowed public `ModelRun`/`SwanConfig` before calling public `generate()` with synchronous scheduling. No upstream templates or generated `INPUT` are patched.
 
-The handoff is not an authorization signature or PRAX receipt. PRAX must authorize the submitting actor and bind the reviewed release; source/runtime checks do not fix the unresolved reviewed-release admission race. Datasource IDs remain mutable; native file hashes record what was actually generated in each successful attempt.
+The handoff is not an authorization signature or PRAX receipt. PRAX authorizes the submitting actor and selects its current ready release. An earlier client observation does not pin that release; native receipts record what actually ran. Exact client-reviewed release pinning is not a prerequisite for ordinary browser or CLI submission. Datasource IDs remain mutable; native file hashes record what was actually generated in each successful attempt.
 
 The model phase is a native SWAN invocation: `/usr/local/bin/swan-serial` for the baseline, or the proposed `/usr/bin/mpirun -np 4 /usr/local/bin/swan.exe`. The public image already supplies both binaries and selects MPI under `mpirun`; this repository does not rebuild or modify SWAN. Serial and MPI are separate acceptance gates.
 
 Verification requires `PRINT`, the configured table/restart files and both NetCDF outputs; it reopens and actually loads the datasets. Exit zero alone is insufficient. Output completeness/readability is not calibration, scientific suitability or proof of arbitrary configurations.
+
+## Browser configuration requests (local candidate)
+
+The local adapter also accepts a source-only request with exactly three top-level fields:
+
+```json
+{
+  "version": 1,
+  "purpose": "rompy-configuration-request",
+  "configuration": {
+    "format": "yaml",
+    "content": "<exact authored YAML>",
+    "content_sha256": "<software-computed UTF-8 SHA-256>",
+    "model_json": "<serialized authored JSON>",
+    "model_json_sha256": "<software-computed UTF-8 SHA-256>"
+  }
+}
+```
+
+The browser constructs this record automatically. Users do not collect hashes, run local Python, or supply a prior `validation: accepted` claim. The normal PRAX API and its existing `handoff-json` string parameter are unchanged. Existing CLI `rompy-configuration-handoff-only` inputs retain their strict checks and original submitted bytes.
+
+Both inputs still enforce the same bounds, source correlation and **fixed-reference-only** restriction. The worker performs real public Python/Pydantic validation under the I/O fence before extraction or generation. A Pydantic rejection emits only `configuration_validation_failed`, not private input values. Because this happens inside an admitted workflow, API acceptance is not Python acceptance or model success.
+
+Only after actual Python acceptance does a browser request gain worker-owned validation/runtime provenance (`prax-runtime-v1`). Publication retains the exact browser bytes in `evidence/configuration-request.json`, actual accepted provenance in `configuration-handoff.json`, and installed facts in `generation-runtime.json`. Existing credential checks, atomic publication, portable modes and output verifier behavior remain in force. Legacy CLI handoff files are not rewritten.
+
+This candidate is **not built, published or deployed**; the previously released image rejects the new purpose. A compatible generation image/release needs separate approval before enabling live browser submission. No new PRAX API, migration, user-managed invocation ID or model run is required to test the adapter locally.
 
 ## Build and rendering
 
@@ -78,9 +104,9 @@ This is fixed-reference serial execution/output acceptance, not scientific calib
 
 ## Local verification
 
-The local gate passes **35 tests** and Ruff. Tests use mocked generation/model outputs; no actual generation or model execution occurs. `examples/inactive-serial.fixture.yml` and `examples/inactive-mpi.fixture.yml` are offline review fixtures with explicitly synthetic source/commit/secret names, not deployable targets.
+The local candidate gate passes **65 tests** and Ruff (the original baseline had 35). Tests use mocked generation/model outputs; no actual generation or model execution occurs. `examples/inactive-serial.fixture.yml` and `examples/inactive-mpi.fixture.yml` are offline review fixtures with explicitly synthetic source/commit/secret names, not deployable targets.
 
-The Python image built locally and accepted the actual configuration-only CLI handoff in a network-disabled container using real pinned public Pydantic models. Its reviewed Python/package/source identities matched. The sandbox retained a read-only root, UID10001, bounded CPU/memory/PIDs and a 64MiB container-only `/tmp`. An initial fully read-only attempt failed because Cartopy needs temporary storage during import; no model code or validation guard was weakened. Reproduce the pure check with `sh scripts/image-preflight.sh /path/to/private-handoff.json` after building locally.
+The Python image built locally and accepted the actual configuration-only CLI handoff in a network-disabled container using real pinned public Pydantic models. Its reviewed Python/package/source identities matched. The sandbox retained a read-only root, UID10001, bounded CPU/memory/PIDs and a 64MiB container-only `/tmp`. An initial fully read-only attempt failed because Cartopy needs temporary storage during import; no model code or validation guard was weakened. Reproduce the pure check with `sh scripts/image-preflight.sh /path/to/private-input.json` after building locally. The helper accepts either a legacy CLI handoff (including its reviewed-runtime comparison) or a source-only browser request; both require actual Python acceptance before it reports success. Validation failures use a controlled reason rather than echoing private model values.
 
 The unchanged pinned SWAN image was pulled and its serial/MPI binaries, selector and launcher were checked for presence/executability, without launching the model. `verification.json` records nonsecret local image/preflight facts; the local image ID is **not** a published/pullable runner release. The fresh public PRAX schema still advertises only `stage_ref`/`parameters` for `PipelineRunRequest`, not a reviewed-release/idempotency field.
 
@@ -101,7 +127,7 @@ Local tests exercise handoff parsing/correlation, reference/runtime fences, mock
 
 The installed `oceanum-prax-sdk 0.3.2` exposes explicitly partial ProjectSpec/PipelineSpec models. Passing those local checks is **not full server structural/prerequisite admission**. The published `oceanum prax validate` command performs an authenticated POST to the PRAX API, not an offline schema check. A later validation call needs a concrete reviewed target/source/secret and must remain distinct from deployment/run.
 
-Use the published `oceanum-prax-cli` for actual PRAX operations; don't add lifecycle wrappers to the ROMPY plugin. The serial proof passed concrete server validation, immutable build/release readiness, native workflow lint, artifact publication and remote output verification. Atomic client-reviewed-release enforcement, unknown-submission reconciliation and authoritative console identity remain unresolved frontend handoff gates; frontend submission stays disabled.
+Use the published `oceanum-prax-cli` for actual PRAX operations; don't add lifecycle wrappers to the ROMPY plugin. The serial proof passed concrete server validation, immutable build/release readiness, native workflow lint, artifact publication and remote output verification. Direct browser submission through the existing API, real Nav/CORS compatibility, honest uncertain-response handling and native operations handoff remain frontend integration gates. The CLI is an independent interface, not a browser dependency; a new reviewed-binding/invocation API is not required. No live browser submission is enabled by this adapter change.
 
 The 64MiB generation-tree threshold is a post-generation publication check, **not** a hard download/filesystem quota. Pod CPU/memory/timeout and ephemeral-storage behavior must be reviewed at deployment. The generation adapter is a trusted fixed-case tool, not a hostile-code sandbox.
 
