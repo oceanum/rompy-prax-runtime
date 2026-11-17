@@ -2,6 +2,10 @@
 
 This repository separates runtime execution from the frontend workbench and configuration-only `oceanum rompy` plugin. It is not a modelling API, run database or operations CLI. PRAX owns builds, releases, submission, status/logs, retries and artifacts.
 
+## Runtime-owned bounded-profile contract
+
+[`docs/bounded-swan-profile.md`](docs/bounded-swan-profile.md) is the authoritative design contract for a future bounded edited SWAN profile, selection fence, versioned workspace evidence and output verification. It is not enabled in the current runtime: admission remains fixed-reference-only until the integrated issue #5 gate is accepted. This documentation does not authorize data extraction, builds, deployment or model execution.
+
 ## Pipeline contract
 
 | Phase | Image | Resources | Datamesh credential |
