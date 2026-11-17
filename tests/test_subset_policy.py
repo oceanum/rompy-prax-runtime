@@ -87,13 +87,40 @@ def _pinned_model(document):
     return SwanRun.model_validate(deepcopy(document))
 
 
+def test_preparer_anchors_immutable_source_physics_and_path_fields():
+    for mutate in (
+        lambda d: d["config"]["inpgrid"]["bottom"]["source"].update(
+            datasource="caller-controlled"
+        ),
+        lambda d: d["config"]["inpgrid"]["bottom"]["source"]["kwargs"].update(
+            service="https://caller-controlled.invalid"
+        ),
+        lambda d: d["config"]["physics"]["quadrupl"].update(iquad=99),
+        lambda d: d.update(output_dir="caller-controlled"),
+    ):
+        document = reference()
+        mutate(document)
+        # The preparer has no caller-supplied baseline parameter; policy is
+        # evaluated against the checked-in bytes, not the candidate itself.
+        with pytest.raises(PolicyError):
+            stages.prepare_bounded_model(document)
+
+
+def test_preparer_fails_closed_on_tampered_reference_bytes(monkeypatch, tmp_path):
+    reference_path = tmp_path / "reference.yml"
+    reference_path.write_bytes(stages.REFERENCE.read_bytes() + b"# tampered\n")
+    monkeypatch.setattr(stages, "REFERENCE", reference_path)
+    with pytest.raises(stages.StageError, match="reference_integrity"):
+        stages.checked_reference_document()
+
+
 def test_actual_pinned_mesh_and_buffers_reject_rounding_and_accept_interior():
     from rompy_prax_runtime.subset import validate_actual_model
 
     base = reference()
     reference_model = _pinned_model(base)
     valid = edited()
-    model = stages.prepare_bounded_model(valid, base)
+    model = stages.prepare_bounded_model(valid)
     validate_actual_model(model, reference_model, valid, base)
 
     rounded = deepcopy(base)
@@ -102,7 +129,7 @@ def test_actual_pinned_mesh_and_buffers_reject_rounding_and_accept_interior():
     rounded_model = _pinned_model(rounded)
     assert rounded_model.config.grid.x.shape == (25, 4)
     with pytest.raises(stages.StageError, match="configuration_policy_failed"):
-        stages.prepare_bounded_model(rounded, base)
+        stages.prepare_bounded_model(rounded)
 
     for xlen, mx in ((7.4, 2), (6.4, 2)):
         candidate = deepcopy(base)

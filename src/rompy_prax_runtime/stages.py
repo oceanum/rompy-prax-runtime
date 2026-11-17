@@ -223,8 +223,23 @@ def admit(raw):
         raise StageError("malformed_handoff") from None
 
 
-def prepare_bounded_model(document, reference_document=None):
-    """Internal, not admission: build and fence the bounded pinned-model candidate.
+def checked_reference_document():
+    """Load the immutable policy baseline and fail closed on byte tampering."""
+    try:
+        reference_bytes = REFERENCE.read_bytes()
+        profile = json.loads(MANIFEST.read_bytes())
+        expected_sha256 = profile["configuration"]["sha256"]
+        if digest(reference_bytes) != expected_sha256:
+            raise StageError("reference_integrity")
+        return yaml_document(reference_bytes.decode("utf-8"))
+    except StageError:
+        raise
+    except Exception:
+        raise StageError("reference_integrity") from None
+
+
+def prepare_bounded_model(document):
+    """Internal, not admission: build and fence against the checked-in baseline.
 
     Public ``admit`` and ``generate`` remain fixed-reference-only until the
     integrated issue #5 evidence gate is accepted.
@@ -237,7 +252,7 @@ def prepare_bounded_model(document, reference_document=None):
     class SwanRun(ModelRun):
         config: SwanConfig = Field(..., discriminator="model_type")
 
-    reference_document = reference_document or yaml_document(REFERENCE.read_text())
+    reference_document = checked_reference_document()
     effective = effective_document(document, reference_document)
     try:
         with pure_validation():

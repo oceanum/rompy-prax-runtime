@@ -70,7 +70,7 @@ def test_real_pinned_generation_of_reference_and_valid_edit(
         subprocess, "Popen", lambda *_a, **_k: pytest.fail("model subprocess attempted")
     )
     monkeypatch.setattr(os, "system", lambda *_a, **_k: pytest.fail("shell attempted"))
-    model = stages.prepare_bounded_model(document, reference)
+    model = stages.prepare_bounded_model(document)
     cwd = Path.cwd()
     work = tmp_path / "work"
     (work / "examples").mkdir(parents=True)
