@@ -134,6 +134,25 @@ def test_generation_publishes_complete_workspace_only_after_checks(
     assert counter["generated"] == 1
     assert (output / stages.STAGING / "INPUT").exists()
     native = json.loads((output / "evidence/native-inputs.json").read_bytes())
+    checksum_rows = {
+        name: sha
+        for sha, name in (
+            line.split("  ", 1)
+            for line in (output / "native-inputs.sha256").read_text().splitlines()
+        )
+    }
+    assert checksum_rows == native
+    assert list(native) == sorted(native)
+    assert str(stages.STAGING / "INPUT") in native
+    for mandatory in (
+        "evidence/configuration-handoff.json",
+        "evidence/generation-runtime.json",
+        "evidence/generation-profile.json",
+    ):
+        assert mandatory in native
+    profile = json.loads((output / "evidence/generation-profile.json").read_bytes())
+    assert profile["contract"] == "rompy-prax-generation-profile"
+    assert profile["profile_id"] == "reference-fixed-v1"
     for name, sha in native.items():
         assert stages.digest((output / name).read_bytes()) == sha
     assert not list(tmp_path.glob("rompy-preparing-*"))

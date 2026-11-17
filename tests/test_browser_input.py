@@ -96,6 +96,17 @@ def test_worker_records_actual_acceptance_and_preserves_raw_browser_request(
     assert result["phase"] == "generated" and result["model_executed"] is False
     assert counter["generated"] == 1
     assert (root / "evidence/configuration-request.json").read_bytes() == raw.encode()
+    native = json.loads((root / "evidence/native-inputs.json").read_bytes())
+    request_path = "evidence/configuration-request.json"
+    assert native[request_path] == stages.digest(raw.encode())
+    checksum_rows = {
+        name: sha
+        for sha, name in (
+            line.split("  ", 1)
+            for line in (root / "native-inputs.sha256").read_text().splitlines()
+        )
+    }
+    assert checksum_rows == native
     accepted_raw = (root / "evidence/configuration-handoff.json").read_text()
     accepted, document = stages.admit(accepted_raw)
     assert accepted["purpose"] == "rompy-configuration-handoff-only"
