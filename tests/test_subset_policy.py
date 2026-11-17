@@ -45,7 +45,7 @@ def test_reference_and_policy_time_representation():
         validate(doc, base)
 
 
-def test_public_admission_stays_fixed_reference_only():
+def test_public_admission_activates_bounded_browser_profile():
     document = edited()
     source = json.dumps(document, separators=(",", ":"))
     payload = {
@@ -59,8 +59,9 @@ def test_public_admission_stays_fixed_reference_only():
             "model_json_sha256": stages.digest(source.encode()),
         },
     }
-    with pytest.raises(stages.StageError, match="only_reviewed_reference_supported"):
-        stages.admit(json.dumps(payload))
+    accepted, actual = stages.admit(json.dumps(payload))
+    assert accepted["purpose"] == "rompy-configuration-request"
+    assert actual == document
 
 
 def test_unsupported_changes_and_invalid_numbers_fail_closed():
@@ -142,3 +143,53 @@ def test_actual_pinned_mesh_and_buffers_reject_rounding_and_accept_interior():
         if actual.config.grid.x.shape != (25, mx + 1):
             with pytest.raises(PolicyError):
                 validate_actual_model(actual, reference_model, candidate, base)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    ["last_hour_boundary", "minimum_mesh_extent", "maximum_mesh", "maximum_points"],
+)
+def test_edit_family_boundaries_use_actual_pinned_selection(edit):
+    document = reference()
+    grid = document["config"]["cgrid"]["grid"]
+    points = document["config"]["output"]["points"]
+    if edit == "last_hour_boundary":
+        document["period"].update(
+            start="2023-01-01T23:00:00Z", duration="1h", interval="1h"
+        )
+    elif edit == "minimum_mesh_extent":
+        grid.update(xp=112.0, yp=-34.5, xlen=3.0, ylen=3.0, mx=1, my=1)
+        points.update(xp=[114.0], yp=[-34.0])
+    elif edit == "maximum_mesh":
+        grid.update(xp=112.0, yp=-34.5, xlen=4.0, ylen=4.0, mx=14, my=24)
+        points.update(xp=[114.0], yp=[-34.0])
+    else:
+        points.update(xp=[114.0, 114.1, 114.2], yp=[-34.0, -34.0, -34.0])
+    base = reference()
+    model = stages.prepare_bounded_model(document)
+    model_json = json.dumps(document, separators=(",", ":"))
+    from rompy_prax_runtime.subset import expected_outputs
+
+    outputs = expected_outputs(document, base, stages.digest(model_json.encode()))
+    assert model.config.grid.x.shape == (
+        grid["my"] + 1,
+        grid["mx"] + 1,
+    )
+    assert outputs["dimensions"]["swangrid.nc"]["yc"] == model.config.grid.x.shape[0]
+    assert outputs["dimensions"]["swangrid.nc"]["xc"] == model.config.grid.x.shape[1]
+    assert outputs["dimensions"]["swanspec.nc"]["points"] == len(points["xp"])
+
+
+def test_actual_selection_rejects_outside_points_and_invalid_edits():
+    cases = []
+    outside = edited()
+    outside["config"]["output"]["points"].update(xp=[130.0], yp=[0.0])
+    cases.append(outside)
+    bad_time = edited()
+    bad_time["period"].update(start="2023-01-02T01:00:00", duration="1h")
+    cases.append(bad_time)
+    for document in cases:
+        with pytest.raises(
+            (stages.StageError, PolicyError), match="^configuration_policy_failed$"
+        ):
+            stages.prepare_bounded_model(document)

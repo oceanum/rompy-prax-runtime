@@ -53,7 +53,7 @@ def test_rejects_source_json_difference_unknown_reference_and_bad_evidence(hando
         model_json_sha256=stages.digest(model.encode()),
     )
     changed["validation"]["document_sha256"] = stages.digest(model.encode())
-    with pytest.raises(stages.StageError, match="only_reviewed_reference"):
+    with pytest.raises(stages.StageError, match="configuration_policy_failed"):
         stages.admit(raw(changed))
     changed = copy.deepcopy(handoff)
     changed["validation"]["document_sha256"] = "wrong"
@@ -112,6 +112,7 @@ def fake_generator(monkeypatch, handoff, behavior="good"):
         monkeypatch.setitem(sys.modules, name, ModuleType(name))
     sys.modules["rompy.model"].ModelRun = Run
     sys.modules["rompy_swan.config"].SwanConfig = type("SwanConfig", (), {})
+    monkeypatch.setattr(stages, "prepare_bounded_model", lambda _document: Model())
     monkeypatch.setitem(
         sys.modules,
         "dask",
@@ -153,7 +154,7 @@ def test_generation_publishes_complete_workspace_only_after_checks(
     profile = json.loads((output / "evidence/generation-profile.json").read_bytes())
     assert profile["contract"] == "rompy-prax-generation-profile"
     assert profile["version"] == 2
-    assert profile["profile_id"] == "reference-fixed-v1"
+    assert profile["profile_id"] == "reference-subsets-v1"
     assert profile["expected_outputs"]["dimensions"] == {
         "swangrid.nc": {"time": 25, "yc": 25, "xc": 15},
         "swanspec.nc": {"points": 3, "time": 25, "frequency": 35, "direction": 36},
