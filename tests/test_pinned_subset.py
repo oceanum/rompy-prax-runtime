@@ -183,6 +183,8 @@ PIPELINE_CASES = [
         {},
         "hotfile_20230102T000000.txt",
         "20230101.000000",
+        "20230102.000000",
+        "1.0 HR",
         "CGRID REGULAR xpc=110.0 ypc=-35.2 alpc=4.0 xlenc=7.5 ylenc=12.5 mxc=14 myc=24",
         "xp=114.0 yp=-34.0",
         {
@@ -206,6 +208,8 @@ PIPELINE_CASES = [
         },
         "hotfile_20230101T180000.txt",
         "20230101.060000",
+        "20230101.180000",
+        "1.0 HR",
         "CGRID REGULAR xpc=112.0 ypc=-34.5 alpc=4.0 xlenc=3.0 ylenc=3.0 mxc=7 myc=12",
         "xp=114.0 yp=-34.0",
         {
@@ -230,6 +234,8 @@ PIPELINE_CASES = [
         },
         "hotfile_20230102T000000.txt",
         "20230101.230000",
+        "20230102.000000",
+        "1.0 HR",
         "CGRID REGULAR xpc=112.0 ypc=-34.5 alpc=4.0 xlenc=3.0 ylenc=3.0 mxc=1 myc=1",
         "xp=112.0 yp=-34.5",
         {
@@ -242,6 +248,8 @@ PIPELINE_CASES = [
         {"interval: 1h": "interval: 2h"},
         "hotfile_20230102T000000.txt",
         "20230101.000000",
+        "20230102.000000",
+        "2.0 HR",
         "CGRID REGULAR xpc=110.0 ypc=-35.2 alpc=4.0 xlenc=7.5 ylenc=12.5 mxc=14 myc=24",
         "xp=114.0 yp=-34.0",
         {
@@ -257,6 +265,8 @@ PIPELINE_CASES = [
         },
         "hotfile_20230102T000000.txt",
         "20230101.000000",
+        "20230102.000000",
+        "1.0 HR",
         "CGRID REGULAR xpc=110.0 ypc=-35.2 alpc=4.0 xlenc=7.5 ylenc=12.5 mxc=14 myc=24",
         "xp=114.0 yp=-34.0 &\n    xp=112.5 yp=-26.0",
         {
@@ -270,7 +280,7 @@ PIPELINE_CASES = [
 
 @pytest.mark.parametrize("envelope", ["browser", "legacy"])
 @pytest.mark.parametrize(
-    "edits, hotfile, expected_start, expected_grid, expected_points, expected_dimensions",
+    "edits, hotfile, expected_start, expected_end, expected_interval, expected_grid, expected_points, expected_dimensions",
     PIPELINE_CASES,
 )
 def test_integrated_edited_profile_local_pipeline(
@@ -278,6 +288,8 @@ def test_integrated_edited_profile_local_pipeline(
     edits,
     hotfile,
     expected_start,
+    expected_end,
+    expected_interval,
     expected_grid,
     expected_points,
     expected_dimensions,
@@ -363,6 +375,16 @@ def test_integrated_edited_profile_local_pipeline(
     control = (staging / "INPUT").read_text()
     assert hotfile in control
     assert f"tbegc={expected_start}" in control
+    import re
+
+    compute = re.search(
+        r"(?m)^COMPUTE NONSTATIONARY tbegc=(\S+) deltc=(\S+\s+\S+) tendc=(\S+)\s*$",
+        control,
+    )
+    assert compute is not None, control
+    assert compute.groups() == (expected_start, expected_interval, expected_end)
+    assert f"OUTPUT tbegblk={expected_start} deltblk={expected_interval}" in control
+    assert f"OUTPUT tbegspc={expected_start} deltspc={expected_interval}" in control
     assert expected_grid in control
     assert expected_points in control
     (staging / "PRINT").write_text("synthetic output fixture")
