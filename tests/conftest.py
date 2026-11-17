@@ -14,7 +14,7 @@ def handoff():
         "python": "3.12.13",
         "packages": stages.EXPECTED,
         "sources_sha256": {"rompy": "a" * 64, "rompy-swan": "b" * 64},
-        "profile_id": "reference-fixed-v1",
+        "profile_id": "reference-subsets-v1",
         "profile_version": 1,
         "adapter_sha256": "d" * 64,
         "profile_module_sha256": "e" * 64,

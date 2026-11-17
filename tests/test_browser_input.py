@@ -193,6 +193,14 @@ def test_python_validation_rejects_before_credentials_or_workspace_and_redacts_e
             )
 
     sys.modules["rompy.model"].ModelRun = BadRun
+
+    def prepare(document):
+        try:
+            return BadRun.model_validate(document)
+        except ValidationError:
+            raise stages.StageError("configuration_validation_failed") from None
+
+    monkeypatch.setattr(stages, "prepare_bounded_model", prepare)
     with pytest.raises(
         stages.StageError, match="^configuration_validation_failed$"
     ) as error:
@@ -227,6 +235,14 @@ def test_browser_entrypoint_reports_validation_failure_without_private_values(
             )
 
     sys.modules["rompy.model"].ModelRun = BadRun
+
+    def prepare(document):
+        try:
+            return BadRun.model_validate(document)
+        except ValidationError:
+            raise stages.StageError("configuration_validation_failed") from None
+
+    monkeypatch.setattr(stages, "prepare_bounded_model", prepare)
     monkeypatch.setenv("ROMPY_HANDOFF_JSON", json.dumps(request(handoff)))
     monkeypatch.setattr(
         sys, "argv", ["runtime", "generate", "--destination", str(tmp_path / "run")]
@@ -274,6 +290,12 @@ def test_browser_python_validation_keeps_io_fence(monkeypatch, handoff, tmp_path
             (tmp_path / "unexpected").write_text("not allowed")
 
     sys.modules["rompy.model"].ModelRun = ReadingRun
+
+    def validate(document):
+        with stages.pure_validation():
+            return ReadingRun.model_validate(document)
+
+    monkeypatch.setattr(stages, "prepare_bounded_model", validate)
     with pytest.raises(stages.StageError, match="validation_io_blocked"):
         stages.generate(json.dumps(request(handoff)), tmp_path / "run")
     assert counter["generated"] == 0

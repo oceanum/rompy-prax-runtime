@@ -1,6 +1,7 @@
-"""Generate/verify only. The model task uses the unchanged upstream SWAN image.
+"""Generate/verify only. Admission is bounded by the versioned subset policy.
 
-Initial admission is the known Datamesh .tech reference, not generic YAML execution.
+The upstream SWAN image, source/physics contract and workflow envelopes remain
+unchanged; this module does not execute SWAN or authorize publication.
 """
 
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
@@ -196,10 +197,24 @@ def admit(raw):
         reference = REFERENCE.read_bytes()
         if digest(reference) != profile["configuration"]["sha256"]:
             raise StageError("reference_integrity")
-        if not same(document, yaml_document(reference.decode())):
-            raise StageError("only_reviewed_reference_supported")
+        from .subset import validate
+
+        try:
+            validate(document, yaml_document(reference.decode()))
+            # Actual public model construction, grid generation and buffered
+            # selection checks remain inside the no-I/O admission fence.
+            prepare_bounded_model(document)
+        except StageError as error:
+            if error.args and error.args[0] in {
+                "configuration_validation_failed",
+                "validation_io_blocked",
+            }:
+                raise
+            raise StageError("configuration_policy_failed") from None
+        except Exception:
+            raise StageError("configuration_policy_failed") from None
         # Source-only requests carry no prior Python acceptance claim. Both
-        # formats still pass the same reference/source checks above.
+        # formats use the same authored policy and actual pinned validation.
         if browser:
             return deepcopy(handoff), deepcopy(document)
         if not same(handoff["period"], document["period"]) or not same(
@@ -240,11 +255,7 @@ def checked_reference_document():
 
 
 def prepare_bounded_model(document):
-    """Internal, not admission: build and fence against the checked-in baseline.
-
-    Public ``admit`` and ``generate`` remain fixed-reference-only until the
-    integrated issue #5 evidence gate is accepted.
-    """
+    """Build the detached model and fence actual pinned selection pre-data."""
     from pydantic import Field
     from rompy.model import ModelRun
     from rompy_swan.config import SwanConfig
@@ -253,12 +264,22 @@ def prepare_bounded_model(document):
     class SwanRun(ModelRun):
         config: SwanConfig = Field(..., discriminator="model_type")
 
+    from pydantic import ValidationError
+
     reference_document = checked_reference_document()
     effective = effective_document(document, reference_document)
     try:
         with pure_validation():
             model = SwanRun.model_validate(deepcopy(effective))
             reference_model = SwanRun.model_validate(deepcopy(reference_document))
+    except StageError:
+        raise
+    except ValidationError:
+        raise StageError("configuration_validation_failed") from None
+    except Exception:
+        raise StageError("configuration_policy_failed") from None
+    try:
+        with pure_validation():
             validate_actual_model(model, reference_model, document, reference_document)
     except StageError:
         raise
@@ -292,7 +313,7 @@ def runtime():
         "profile_module_sha256": digest(
             Path(__file__).with_name("subset.py").read_bytes()
         ),
-        "profile_id": "reference-fixed-v1",
+        "profile_id": "reference-subsets-v1",
         "profile_version": 1,
     }
 
@@ -360,19 +381,16 @@ def generate(raw, destination):
             for key in ("python", "packages", "sources_sha256")
         ):
             raise StageError("reviewed_runtime_mismatch")
-    from pydantic import Field, ValidationError
-    from rompy.model import ModelRun
-    from rompy_swan.config import SwanConfig
-
-    class SwanRun(ModelRun):
-        config: SwanConfig = Field(..., discriminator="model_type")
-
     try:
-        with pure_validation():
-            model = SwanRun.model_validate(deepcopy(document))
-    except ValidationError:
+        model = prepare_bounded_model(document)
+    except StageError as error:
         # Pydantic errors may contain the private input. Keep task logs value-free.
-        raise StageError("configuration_validation_failed") from None
+        if error.args and error.args[0] in {
+            "configuration_validation_failed",
+            "validation_io_blocked",
+        }:
+            raise
+        raise StageError("configuration_policy_failed") from None
     if browser:
         handoff = _worker_handoff(handoff, document, facts)
     token = os.environ.get("DATAMESH_TOKEN")
@@ -436,8 +454,8 @@ def generate(raw, destination):
         profile_record = {
             "contract": "rompy-prax-generation-profile",
             "version": 2,
-            "profile_id": "reference-fixed-v1",
-            "profile_version": 1,
+            "profile_id": facts["profile_id"],
+            "profile_version": facts["profile_version"],
             "source_sha256": handoff["configuration"]["content_sha256"],
             "model_json_sha256": handoff["configuration"]["model_json_sha256"],
             "runtime_sha256": digest(encoded(facts)),
@@ -513,55 +531,16 @@ def _read_json(path):
 
 def _expected_from_source(handoff):
     _, document = admit(encoded(handoff).decode())
-    period = document["period"]
-    start_text = str(period["start"])
-    from datetime import datetime, timezone
+    from .subset import expected_outputs
 
-    start = datetime.fromisoformat(start_text.replace("Z", "+00:00"))
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
-    end = start + _duration(period["duration"])
-    hot = "hotfile_" + end.strftime("%Y%m%dT%H%M%S") + ".txt"
-    grid = document["config"]["cgrid"]["grid"]
-    duration = _duration(period["duration"]).total_seconds() / 3600
-    interval = _duration(period["interval"]).total_seconds() / 3600
-    if interval <= 0 or duration % interval:
-        raise StageError("unsupported_workspace_profile")
-    time_count = int(duration / interval) + 1
-    return {
-        "netcdf": ["swangrid.nc", "swanspec.nc"],
-        "files": ["swantable.txt", hot],
-        "dimensions": {
-            "swangrid.nc": {
-                "time": time_count,
-                "yc": int(grid["my"]) + 1,
-                "xc": int(grid["mx"]) + 1,
-            },
-            "swanspec.nc": {
-                "points": len(document["config"]["output"]["points"]["xp"]),
-                "time": time_count,
-                "frequency": 35,
-                "direction": 36,
-            },
-        },
-    }
-
-
-def _duration(value):
-    match = re.fullmatch(r"(\d+)([dhms])", str(value))
-    if not match:
-        raise StageError("unsupported_workspace_profile")
-    from datetime import timedelta
-
-    number, unit = int(match.group(1)), match.group(2)
-    return timedelta(
-        **{
-            "d": {"days": number},
-            "h": {"hours": number},
-            "m": {"minutes": number},
-            "s": {"seconds": number},
-        }[unit]
-    )
+    try:
+        return expected_outputs(
+            document,
+            checked_reference_document(),
+            handoff["configuration"]["model_json_sha256"],
+        )
+    except Exception:
+        raise StageError("unsupported_workspace_profile") from None
 
 
 def _validate_native(root):
@@ -664,7 +643,7 @@ def verify(source, report):
         or profile["contract"] != "rompy-prax-generation-profile"
         or type(profile["version"]) is not int
         or profile["version"] != 2
-        or profile["profile_id"] != "reference-fixed-v1"
+        or profile["profile_id"] != "reference-subsets-v1"
         or type(profile["profile_version"]) is not int
         or profile["profile_version"] != 1
     ):
