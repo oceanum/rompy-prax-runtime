@@ -494,9 +494,19 @@ def _safe_native_path(name):
     return all(part not in {"", ".", ".."} for part in parts)
 
 
+def _reject_constant(_value):
+    raise StageError("malformed_workspace_evidence")
+
+
 def _read_json(path):
     try:
-        return json.loads(path.read_bytes(), object_pairs_hook=pairs)
+        return json.loads(
+            path.read_bytes(),
+            object_pairs_hook=pairs,
+            parse_constant=_reject_constant,
+        )
+    except StageError:
+        raise
     except Exception:
         raise StageError("malformed_workspace_evidence") from None
 
@@ -605,11 +615,23 @@ def _validate_native(root):
     actual = set()
     for path in tree(root / STAGING):
         actual.add(str(path.relative_to(root)))
-    output_names = {"PRINT", "Errfile", "swangrid.nc", "swanspec.nc", "swantable.txt"}
-    expected_outputs = json.loads(MANIFEST.read_bytes())["expected_outputs"]
-    output_names.update(expected_outputs["files"])
-    output_names.update(expected_outputs["netcdf"])
-    actual = {name for name in actual if Path(name).name not in output_names}
+    handoff, _ = admit((root / "evidence/configuration-handoff.json").read_text())
+    expected_outputs = _expected_from_source(handoff)
+    output_paths = {
+        str(STAGING / name)
+        for name in {
+            "PRINT",
+            "Errfile",
+            *expected_outputs["files"],
+            *expected_outputs["netcdf"],
+        }
+    }
+    # SWAN creates these known auxiliary files after the pre-run ledger is made.
+    # Their exact staging-relative locations are optional; no basename matching.
+    auxiliary_paths = {
+        str(STAGING / name) for name in ("norm_end", "swaninit", "swangrid.nc.dum")
+    }
+    actual.difference_update(output_paths | auxiliary_paths)
     expected = actual | required
     if set(native) != expected:
         raise StageError("native_input_coverage")
@@ -643,6 +665,7 @@ def verify(source, report):
         or type(profile["version"]) is not int
         or profile["version"] != 2
         or profile["profile_id"] != "reference-fixed-v1"
+        or type(profile["profile_version"]) is not int
         or profile["profile_version"] != 1
     ):
         raise StageError("unsupported_workspace_version")
@@ -679,10 +702,22 @@ def verify(source, report):
         or profile["model_json_sha256"] != handoff["configuration"]["model_json_sha256"]
         or profile["runtime_sha256"] != digest(encoded(facts))
         or facts.get("profile_id") != profile["profile_id"]
+        or type(facts.get("profile_version")) is not int
         or facts.get("profile_version") != profile["profile_version"]
-        or validation.get("runtime") != facts
     ):
         raise StageError("provenance_mismatch")
+    if "evidence/configuration-request.json" in native:
+        if validation.get("runtime") != facts or validation.get("runtime_id") != digest(
+            encoded(facts)
+        ):
+            raise StageError("provenance_mismatch")
+    else:
+        prior = validation.get("runtime", {})
+        if any(
+            prior.get(key) != facts[key]
+            for key in ("python", "packages", "sources_sha256")
+        ):
+            raise StageError("provenance_mismatch")
     expected = _expected_from_source(handoff)
     if not same(profile["expected_outputs"], expected):
         raise StageError("output_expectations_mismatch")
@@ -699,10 +734,10 @@ def verify(source, report):
     for name in expected["netcdf"]:
         try:
             with xr.open_dataset(staging / name, engine="netcdf4") as dataset:
-                dataset.load()
                 actual_dims = dict(dataset.sizes)
                 if not dataset.data_vars or actual_dims != expected["dimensions"][name]:
                     raise StageError("output_dimensions_mismatch")
+                dataset.load()
                 dimensions[name] = actual_dims
         except StageError:
             raise

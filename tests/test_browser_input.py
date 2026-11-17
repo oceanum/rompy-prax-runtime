@@ -280,6 +280,27 @@ def test_browser_python_validation_keeps_io_fence(monkeypatch, handoff, tmp_path
     assert not list(tmp_path.iterdir())
 
 
+def test_browser_runtime_id_must_bind_worker_facts(monkeypatch, handoff, tmp_path):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(json.dumps(request(handoff)), root)
+    handoff_path = root / "evidence/configuration-handoff.json"
+    accepted = json.loads(handoff_path.read_bytes())
+    accepted["validation"]["runtime_id"] = "0" * 64
+    handoff_path.write_bytes(stages.encoded(accepted))
+    native_path = root / "evidence/native-inputs.json"
+    native = json.loads(native_path.read_bytes())
+    native["evidence/configuration-handoff.json"] = stages.digest(
+        handoff_path.read_bytes()
+    )
+    native_path.write_bytes(stages.encoded(native))
+    (root / "native-inputs.sha256").write_text(
+        "".join(f"{sha}  {name}\n" for name, sha in sorted(native.items()))
+    )
+    with pytest.raises(stages.StageError, match="provenance_mismatch"):
+        stages.verify(root, tmp_path / "report")
+
+
 def test_browser_workspace_remains_compatible_with_unchanged_verifier(
     monkeypatch, handoff, tmp_path
 ):
