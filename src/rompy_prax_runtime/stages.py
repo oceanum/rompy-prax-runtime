@@ -675,7 +675,10 @@ def verify(source, report):
         request_bytes = (root / "evidence/configuration-request.json").read_bytes()
         request, _ = admit(request_bytes.decode())
         if (
-            request["configuration"] != handoff["configuration"]
+            request["purpose"] != "rompy-configuration-request"
+            or request["configuration"] != handoff["configuration"]
+            or handoff["purpose"] != "rompy-configuration-handoff-only"
+            or not isinstance(handoff.get("validation"), dict)
             or handoff["validation"].get("status") != "accepted"
         ):
             raise StageError("provenance_mismatch")
@@ -713,6 +716,8 @@ def verify(source, report):
             raise StageError("provenance_mismatch")
     else:
         prior = validation.get("runtime", {})
+        if not isinstance(prior, dict):
+            raise StageError("provenance_mismatch")
         if any(
             prior.get(key) != facts[key]
             for key in ("python", "packages", "sources_sha256")

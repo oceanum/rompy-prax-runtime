@@ -463,6 +463,30 @@ def test_legacy_common_runtime_mismatch_is_refused(monkeypatch, handoff, tmp_pat
         stages.verify(root, tmp_path / "report")
 
 
+@pytest.mark.parametrize("prior_runtime", [None, [], "broken", True, 7])
+def test_legacy_runtime_wrong_type_is_controlled(
+    monkeypatch, handoff, tmp_path, prior_runtime
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    handoff_path = root / "evidence/configuration-handoff.json"
+    legacy = json.loads(handoff_path.read_bytes())
+    legacy["validation"]["runtime"] = prior_runtime
+    handoff_path.write_bytes(stages.encoded(legacy))
+    native_path = root / "evidence/native-inputs.json"
+    native = json.loads(native_path.read_bytes())
+    native["evidence/configuration-handoff.json"] = stages.digest(
+        handoff_path.read_bytes()
+    )
+    native_path.write_bytes(stages.encoded(native))
+    (root / "native-inputs.sha256").write_text(
+        "".join(f"{sha}  {name}\n" for name, sha in sorted(native.items()))
+    )
+    with pytest.raises(stages.StageError, match="provenance_mismatch"):
+        stages.verify(root, tmp_path / "report")
+
+
 def test_nonfinite_native_manifest_is_a_controlled_error(
     monkeypatch, handoff, tmp_path
 ):

@@ -301,6 +301,57 @@ def test_browser_runtime_id_must_bind_worker_facts(monkeypatch, handoff, tmp_pat
         stages.verify(root, tmp_path / "report")
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    ["source-only", "legacy-envelope", "wrong-adapter"],
+)
+def test_browser_provenance_correlations_fail_closed(
+    monkeypatch, handoff, tmp_path, mutation
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    browser_raw = json.dumps(request(handoff))
+    stages.generate(browser_raw, root)
+    handoff_path = root / "evidence/configuration-handoff.json"
+    accepted = json.loads(handoff_path.read_bytes())
+    if mutation == "source-only":
+        original = json.loads(browser_raw)
+        source_only = {
+            "version": 1,
+            "purpose": "rompy-configuration-request",
+            "configuration": original["configuration"],
+        }
+        request_path = root / "evidence/configuration-request.json"
+        request_path.write_bytes(stages.encoded(source_only))
+    else:
+        request_path = root / "evidence/configuration-request.json"
+    if mutation == "legacy-envelope":
+        accepted.update(
+            handoff,
+            purpose="rompy-configuration-handoff-only",
+        )
+    elif mutation == "wrong-adapter":
+        accepted["validation"]["runtime"]["adapter_sha256"] = "0" * 64
+        accepted["validation"]["runtime_id"] = stages.digest(
+            stages.encoded(accepted["validation"]["runtime"])
+        )
+    handoff_path.write_bytes(stages.encoded(accepted))
+    native_path = root / "evidence/native-inputs.json"
+    native = json.loads(native_path.read_bytes())
+    native["evidence/configuration-handoff.json"] = stages.digest(
+        handoff_path.read_bytes()
+    )
+    native["evidence/configuration-request.json"] = stages.digest(
+        request_path.read_bytes()
+    )
+    native_path.write_bytes(stages.encoded(native))
+    (root / "native-inputs.sha256").write_text(
+        "".join(f"{sha}  {name}\n" for name, sha in sorted(native.items()))
+    )
+    with pytest.raises(stages.StageError):
+        stages.verify(root, tmp_path / "report")
+
+
 def test_browser_workspace_remains_compatible_with_unchanged_verifier(
     monkeypatch, handoff, tmp_path
 ):
