@@ -310,32 +310,23 @@ def test_browser_provenance_correlations_fail_closed(
 ):
     fake_generator(monkeypatch, handoff)
     root = tmp_path / "run"
-    browser_raw = json.dumps(request(handoff))
-    stages.generate(browser_raw, root)
+    stages.generate(json.dumps(request(handoff)), root)
+    _populate_valid_outputs(monkeypatch, root)
+    assert stages.verify(root, tmp_path / "baseline-report")["phase"] == "verified"
+
     handoff_path = root / "evidence/configuration-handoff.json"
+    request_path = root / "evidence/configuration-request.json"
     accepted = json.loads(handoff_path.read_bytes())
     if mutation == "source-only":
-        original = json.loads(browser_raw)
-        source_only = {
-            "version": 1,
-            "purpose": "rompy-configuration-request",
-            "configuration": original["configuration"],
-        }
-        request_path = root / "evidence/configuration-request.json"
-        request_path.write_bytes(stages.encoded(source_only))
+        handoff_path.write_bytes(stages.encoded(request(handoff)))
+    elif mutation == "legacy-envelope":
+        request_path.write_bytes(stages.encoded(handoff))
     else:
-        request_path = root / "evidence/configuration-request.json"
-    if mutation == "legacy-envelope":
-        accepted.update(
-            handoff,
-            purpose="rompy-configuration-handoff-only",
-        )
-    elif mutation == "wrong-adapter":
         accepted["validation"]["runtime"]["adapter_sha256"] = "0" * 64
         accepted["validation"]["runtime_id"] = stages.digest(
             stages.encoded(accepted["validation"]["runtime"])
         )
-    handoff_path.write_bytes(stages.encoded(accepted))
+        handoff_path.write_bytes(stages.encoded(accepted))
     native_path = root / "evidence/native-inputs.json"
     native = json.loads(native_path.read_bytes())
     native["evidence/configuration-handoff.json"] = stages.digest(
@@ -348,8 +339,55 @@ def test_browser_provenance_correlations_fail_closed(
     (root / "native-inputs.sha256").write_text(
         "".join(f"{sha}  {name}\n" for name, sha in sorted(native.items()))
     )
-    with pytest.raises(stages.StageError):
+    with pytest.raises(stages.StageError, match=r"^provenance_mismatch$"):
+        stages.verify(root, tmp_path / f"{mutation}-report")
+
+
+def test_browser_raw_request_change_without_ledger_update_is_rejected(
+    monkeypatch, handoff, tmp_path
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(json.dumps(request(handoff)), root)
+    _populate_valid_outputs(monkeypatch, root)
+    assert stages.verify(root, tmp_path / "raw-baseline-report")["phase"] == "verified"
+    path = root / "evidence/configuration-request.json"
+    path.write_bytes(path.read_bytes() + b" ")
+    with pytest.raises(stages.StageError, match=r"^native_inputs_changed$"):
         stages.verify(root, tmp_path / "report")
+
+
+def _populate_valid_outputs(monkeypatch, root):
+    from types import SimpleNamespace
+
+    profile = json.loads(stages.MANIFEST.read_bytes())["expected_outputs"]
+    for name in ["PRINT", *profile["files"], *profile["netcdf"]]:
+        (root / stages.STAGING / name).write_bytes(b"mock output, no SWAN execution")
+
+    class Dataset:
+        data_vars = {"hs": True}
+
+        def __init__(self, path):
+            self.sizes = (
+                {"time": 25, "yc": 25, "xc": 15}
+                if Path(path).name == "swangrid.nc"
+                else {"points": 3, "time": 25, "frequency": 35, "direction": 36}
+            )
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def load(self):
+            pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "xarray",
+        SimpleNamespace(open_dataset=lambda path, **_k: Dataset(path)),
+    )
 
 
 def test_browser_workspace_remains_compatible_with_unchanged_verifier(
