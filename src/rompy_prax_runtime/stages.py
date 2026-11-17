@@ -223,6 +223,49 @@ def admit(raw):
         raise StageError("malformed_handoff") from None
 
 
+def checked_reference_document():
+    """Load the immutable policy baseline and fail closed on byte tampering."""
+    try:
+        reference_bytes = REFERENCE.read_bytes()
+        profile = json.loads(MANIFEST.read_bytes())
+        expected_sha256 = profile["configuration"]["sha256"]
+        if digest(reference_bytes) != expected_sha256:
+            raise StageError("reference_integrity")
+        return yaml_document(reference_bytes.decode("utf-8"))
+    except StageError:
+        raise
+    except Exception:
+        raise StageError("reference_integrity") from None
+
+
+def prepare_bounded_model(document):
+    """Internal, not admission: build and fence against the checked-in baseline.
+
+    Public ``admit`` and ``generate`` remain fixed-reference-only until the
+    integrated issue #5 evidence gate is accepted.
+    """
+    from pydantic import Field
+    from rompy.model import ModelRun
+    from rompy_swan.config import SwanConfig
+    from .subset import effective_document, validate_actual_model
+
+    class SwanRun(ModelRun):
+        config: SwanConfig = Field(..., discriminator="model_type")
+
+    reference_document = checked_reference_document()
+    effective = effective_document(document, reference_document)
+    try:
+        with pure_validation():
+            model = SwanRun.model_validate(deepcopy(effective))
+            reference_model = SwanRun.model_validate(deepcopy(reference_document))
+            validate_actual_model(model, reference_model, document, reference_document)
+    except StageError:
+        raise
+    except Exception:
+        raise StageError("configuration_policy_failed") from None
+    return model
+
+
 def runtime():
     versions = {name: metadata.version(name) for name in EXPECTED}
     if versions != EXPECTED or platform.python_version() != "3.12.13":
@@ -245,6 +288,11 @@ def runtime():
         "packages": versions,
         "sources_sha256": sources,
         "adapter_sha256": digest(Path(__file__).read_bytes()),
+        "profile_module_sha256": digest(
+            Path(__file__).with_name("subset.py").read_bytes()
+        ),
+        "profile_id": "reference-fixed-v1",
+        "profile_version": 1,
     }
 
 
@@ -384,6 +432,27 @@ def generate(raw, destination):
             handoff_bytes = raw.encode()
         (evidence / "configuration-handoff.json").write_bytes(handoff_bytes)
         (evidence / "generation-runtime.json").write_bytes(encoded(facts))
+        profile_record = {
+            "contract": "rompy-prax-generation-profile",
+            "version": 1,
+            "profile_id": "reference-fixed-v1",
+            "profile_version": 1,
+            "source_sha256": handoff["configuration"]["content_sha256"],
+            "model_json_sha256": handoff["configuration"]["model_json_sha256"],
+            "runtime_sha256": digest(encoded(facts)),
+            "expected_outputs": json.loads(MANIFEST.read_bytes())["expected_outputs"],
+        }
+        (evidence / "generation-profile.json").write_bytes(encoded(profile_record))
+        for path in (
+            evidence / "configuration-handoff.json",
+            evidence / "generation-runtime.json",
+            evidence / "generation-profile.json",
+        ):
+            files[str(path.relative_to(root))] = digest(path.read_bytes())
+        if browser:
+            path = evidence / "configuration-request.json"
+            files[str(path.relative_to(root))] = digest(path.read_bytes())
+        files = dict(sorted(files.items()))
         (evidence / "native-inputs.json").write_bytes(encoded(files))
         (root / "native-inputs.sha256").write_text(
             "".join(f"{value}  {name}\n" for name, value in files.items())
