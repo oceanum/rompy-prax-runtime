@@ -104,6 +104,80 @@ def test_real_pinned_generation_of_reference_and_valid_edit(
         assert document["period"]["start"] == reference["period"]["start"]
 
 
+@pytest.mark.parametrize(
+    "invalid_case",
+    [
+        "arange_mesh_overflow",
+        "expanded_buffered_footprint",
+        "outside_time_window",
+        "nonzero_utc_offset",
+        "invalid_interval",
+        "invalid_point_shape",
+        "forbidden_source",
+        "forbidden_physics_path",
+    ],
+)
+def test_public_generate_rejects_invalid_profiles_before_effects(
+    invalid_case, handoff, monkeypatch, tmp_path
+):
+    import json
+
+    from rompy.core.source import SourceDatamesh
+    from rompy_prax_runtime import stages
+
+    document = stages.yaml_document(handoff["configuration"]["content"])
+    grid = document["config"]["cgrid"]["grid"]
+    period = document["period"]
+    if invalid_case == "arange_mesh_overflow":
+        grid.update(xlen=7.4, mx=2)
+    elif invalid_case == "expanded_buffered_footprint":
+        grid.update(xp=113.0)
+    elif invalid_case == "outside_time_window":
+        period.update(start="2023-01-02T01:00:00", duration="1h")
+    elif invalid_case == "nonzero_utc_offset":
+        period.update(start="2023-01-01T01:00:00+01:00")
+    elif invalid_case == "invalid_interval":
+        period.update(interval="5h")
+    elif invalid_case == "invalid_point_shape":
+        document["config"]["output"]["points"]["yp"] = [-34.0]
+    elif invalid_case == "forbidden_source":
+        document["config"]["inpgrid"]["bottom"]["source"].update(
+            datasource="caller-controlled"
+        )
+    else:
+        document["config"]["physics"]["quadrupl"].update(iquad=99)
+
+    source = json.dumps(document, separators=(",", ":"))
+    configuration = {
+        "format": "json",
+        "content": source,
+        "content_sha256": stages.digest(source.encode()),
+        "model_json": source,
+        "model_json_sha256": stages.digest(source.encode()),
+    }
+    raw = json.dumps(
+        {
+            "version": 1,
+            "purpose": "rompy-configuration-request",
+            "configuration": configuration,
+        }
+    )
+    monkeypatch.delenv("DATAMESH_TOKEN", raising=False)
+    monkeypatch.setattr(
+        SourceDatamesh, "_open", lambda *_a, **_k: pytest.fail("data accessed")
+    )
+    monkeypatch.setattr(
+        SourceDatamesh,
+        "connector",
+        property(lambda _: pytest.fail("connector accessed")),
+    )
+    destination = tmp_path / "workspace"
+    with pytest.raises(stages.StageError, match="^configuration_policy_failed$"):
+        stages.generate(raw, destination)
+    assert not destination.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
 PIPELINE_CASES = [
     pytest.param(
         {},
