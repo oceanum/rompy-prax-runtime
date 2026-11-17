@@ -104,9 +104,112 @@ def test_real_pinned_generation_of_reference_and_valid_edit(
         assert document["period"]["start"] == reference["period"]["start"]
 
 
+PIPELINE_CASES = [
+    pytest.param(
+        {},
+        "hotfile_20230102T000000.txt",
+        "20230101.000000",
+        "CGRID REGULAR xpc=110.0 ypc=-35.2 alpc=4.0 xlenc=7.5 ylenc=12.5 mxc=14 myc=24",
+        "xp=114.0 yp=-34.0",
+        {
+            "swangrid.nc": {"time": 25, "yc": 25, "xc": 15},
+            "swanspec.nc": {"points": 3, "time": 25, "frequency": 35, "direction": 36},
+        },
+        id="reference",
+    ),
+    pytest.param(
+        {
+            "start: 20230101T000000": "start: 20230101T060000",
+            "duration: 1d": "duration: 12h",
+            "xp: 110.0": "xp: 112.0",
+            "yp: -35.2": "yp: -34.5",
+            "xlen: 7.5": "xlen: 3.0",
+            "ylen: 12.5": "ylen: 3.0",
+            "mx: 14": "mx: 7",
+            "my: 24": "my: 12",
+            "xp: [114.0, 112.5, 115.0]": "xp: [114.0]",
+            "yp: [-34.0, -26.0, -30.0]": "yp: [-34.0]",
+        },
+        "hotfile_20230101T180000.txt",
+        "20230101.060000",
+        "CGRID REGULAR xpc=112.0 ypc=-34.5 alpc=4.0 xlenc=3.0 ylenc=3.0 mxc=7 myc=12",
+        "xp=114.0 yp=-34.0",
+        {
+            "swangrid.nc": {"time": 13, "yc": 13, "xc": 8},
+            "swanspec.nc": {"points": 1, "time": 13, "frequency": 35, "direction": 36},
+        },
+        id="combined-interior-edit",
+    ),
+    pytest.param(
+        {
+            "start: 20230101T000000": "start: 20230101T230000Z",
+            "duration: 1d": "duration: 1h",
+            "interval: 1h": "interval: 1h",
+            "xp: 110.0": "xp: 112.0",
+            "yp: -35.2": "yp: -34.5",
+            "xlen: 7.5": "xlen: 3.0",
+            "ylen: 12.5": "ylen: 3.0",
+            "mx: 14": "mx: 1",
+            "my: 24": "my: 1",
+            "xp: [114.0, 112.5, 115.0]": "xp: [112.0]",
+            "yp: [-34.0, -26.0, -30.0]": "yp: [-34.5]",
+        },
+        "hotfile_20230102T000000.txt",
+        "20230101.230000",
+        "CGRID REGULAR xpc=112.0 ypc=-34.5 alpc=4.0 xlenc=3.0 ylenc=3.0 mxc=1 myc=1",
+        "xp=112.0 yp=-34.5",
+        {
+            "swangrid.nc": {"time": 2, "yc": 2, "xc": 2},
+            "swanspec.nc": {"points": 1, "time": 2, "frequency": 35, "direction": 36},
+        },
+        id="late-end-boundary-minimum-mesh",
+    ),
+    pytest.param(
+        {"interval: 1h": "interval: 2h"},
+        "hotfile_20230102T000000.txt",
+        "20230101.000000",
+        "CGRID REGULAR xpc=110.0 ypc=-35.2 alpc=4.0 xlenc=7.5 ylenc=12.5 mxc=14 myc=24",
+        "xp=114.0 yp=-34.0",
+        {
+            "swangrid.nc": {"time": 13, "yc": 25, "xc": 15},
+            "swanspec.nc": {"points": 3, "time": 13, "frequency": 35, "direction": 36},
+        },
+        id="coarser-divisible-interval",
+    ),
+    pytest.param(
+        {
+            "xp: [114.0, 112.5, 115.0]": "xp: [114.0, 112.5]",
+            "yp: [-34.0, -26.0, -30.0]": "yp: [-34.0, -26.0]",
+        },
+        "hotfile_20230102T000000.txt",
+        "20230101.000000",
+        "CGRID REGULAR xpc=110.0 ypc=-35.2 alpc=4.0 xlenc=7.5 ylenc=12.5 mxc=14 myc=24",
+        "xp=114.0 yp=-34.0 &\n    xp=112.5 yp=-26.0",
+        {
+            "swangrid.nc": {"time": 25, "yc": 25, "xc": 15},
+            "swanspec.nc": {"points": 2, "time": 25, "frequency": 35, "direction": 36},
+        },
+        id="reference-footprint-two-points",
+    ),
+]
+
+
 @pytest.mark.parametrize("envelope", ["browser", "legacy"])
+@pytest.mark.parametrize(
+    "edits, hotfile, expected_start, expected_grid, expected_points, expected_dimensions",
+    PIPELINE_CASES,
+)
 def test_integrated_edited_profile_local_pipeline(
-    envelope, handoff, monkeypatch, tmp_path
+    envelope,
+    edits,
+    hotfile,
+    expected_start,
+    expected_grid,
+    expected_points,
+    expected_dimensions,
+    handoff,
+    monkeypatch,
+    tmp_path,
 ):
     import copy
     import json
@@ -119,19 +222,7 @@ def test_integrated_edited_profile_local_pipeline(
 
     facts = stages.runtime()
     content = handoff["configuration"]["content"]
-    substitutions = {
-        "start: 20230101T000000": "start: 20230101T060000",
-        "duration: 1d": "duration: 12h",
-        "xp: 110.0": "xp: 112.0",
-        "yp: -35.2": "yp: -34.5",
-        "xlen: 7.5": "xlen: 3.0",
-        "ylen: 12.5": "ylen: 3.0",
-        "mx: 14": "mx: 7",
-        "my: 24": "my: 12",
-        "xp: [114.0, 112.5, 115.0]": "xp: [114.0]",
-        "yp: [-34.0, -26.0, -30.0]": "yp: [-34.0]",
-    }
-    for original, replacement in substitutions.items():
+    for original, replacement in edits.items():
         assert original in content
         content = content.replace(original, replacement, 1)
     document = stages.yaml_document(content)
@@ -144,12 +235,14 @@ def test_integrated_edited_profile_local_pipeline(
         "model_json_sha256": stages.digest(model_json.encode()),
     }
     if envelope == "browser":
-        request = {
-            "version": 1,
-            "purpose": "rompy-configuration-request",
-            "configuration": configuration,
-        }
-        raw = json.dumps(request, separators=(",", ":"))
+        raw = json.dumps(
+            {
+                "version": 1,
+                "purpose": "rompy-configuration-request",
+                "configuration": configuration,
+            },
+            separators=(",", ":"),
+        )
     else:
         legacy = copy.deepcopy(handoff)
         legacy["configuration"] = configuration
@@ -190,16 +283,23 @@ def test_integrated_edited_profile_local_pipeline(
     result = stages.generate(raw, root)
     assert result["phase"] == "generated"
     profile = stages._read_json(root / "evidence/generation-profile.json")
-    expected = profile["expected_outputs"]
+    assert profile["expected_outputs"]["files"] == ["swantable.txt", hotfile]
+    assert profile["expected_outputs"]["dimensions"] == expected_dimensions
     staging = root / stages.STAGING
+    control = (staging / "INPUT").read_text()
+    assert hotfile in control
+    assert f"tbegc={expected_start}" in control
+    assert expected_grid in control
+    assert expected_points in control
     (staging / "PRINT").write_text("synthetic output fixture")
-    for name in expected["files"]:
-        (staging / name).write_text("synthetic output fixture")
-    for name, dimensions in expected["dimensions"].items():
+    (staging / "swantable.txt").write_text("synthetic output fixture")
+    (staging / hotfile).write_text("synthetic output fixture")
+    for name, dimensions in expected_dimensions.items():
         dims = tuple(dimensions)
         shape = tuple(dimensions[key] for key in dims)
-        dataset = xr.Dataset({"fixture": (dims, np.ones(shape))})
-        dataset.to_netcdf(staging / name, engine="scipy")
+        xr.Dataset({"fixture": (dims, np.ones(shape))}).to_netcdf(
+            staging / name, engine="scipy"
+        )
     report = stages.verify(root, tmp_path / "verification")
     assert report["phase"] == "verified"
     assert report["profile_id"] == "reference-subsets-v1"
