@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+from pathlib import Path
 import sys
 
 import pytest
@@ -293,7 +294,13 @@ def test_browser_workspace_remains_compatible_with_unchanged_verifier(
 
     class Dataset:
         data_vars = {"hs": True}
-        sizes = {"time": 25, "x": 3}
+
+        def __init__(self, path):
+            self.sizes = (
+                {"time": 25, "yc": 25, "xc": 15}
+                if Path(path).name == "swangrid.nc"
+                else {"points": 3, "time": 25, "frequency": 35, "direction": 36}
+            )
 
         def __enter__(self):
             return self
@@ -305,7 +312,9 @@ def test_browser_workspace_remains_compatible_with_unchanged_verifier(
             pass
 
     monkeypatch.setitem(
-        sys.modules, "xarray", SimpleNamespace(open_dataset=lambda *_a, **_k: Dataset())
+        sys.modules,
+        "xarray",
+        SimpleNamespace(open_dataset=lambda path, **_k: Dataset(path)),
     )
     result = stages.verify(root, tmp_path / "report")
     assert result["phase"] == "verified"

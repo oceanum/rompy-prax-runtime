@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import sys
 import shutil
 import tempfile
@@ -412,7 +413,7 @@ def generate(raw, destination):
                 raise StageError("generation_or_workspace_failed")
         finally:
             os.chdir(previous)
-        outputs = json.loads(MANIFEST.read_bytes())["expected_outputs"]
+        outputs = _expected_from_source(handoff)
         if any(
             (root / STAGING / name).exists()
             for name in ["PRINT", "Errfile", *outputs["netcdf"], *outputs["files"]]
@@ -434,13 +435,13 @@ def generate(raw, destination):
         (evidence / "generation-runtime.json").write_bytes(encoded(facts))
         profile_record = {
             "contract": "rompy-prax-generation-profile",
-            "version": 1,
+            "version": 2,
             "profile_id": "reference-fixed-v1",
             "profile_version": 1,
             "source_sha256": handoff["configuration"]["content_sha256"],
             "model_json_sha256": handoff["configuration"]["model_json_sha256"],
             "runtime_sha256": digest(encoded(facts)),
-            "expected_outputs": json.loads(MANIFEST.read_bytes())["expected_outputs"],
+            "expected_outputs": outputs,
         }
         (evidence / "generation-profile.json").write_bytes(encoded(profile_record))
         for path in (
@@ -480,46 +481,242 @@ def generate(raw, destination):
             shutil.rmtree(root)
 
 
+def _safe_native_path(name):
+    if (
+        not isinstance(name, str)
+        or not name
+        or any(ord(c) < 32 or ord(c) == 127 for c in name)
+    ):
+        return False
+    if "\\" in name or name.startswith("/") or "//" in name:
+        return False
+    parts = name.split("/")
+    return all(part not in {"", ".", ".."} for part in parts)
+
+
+def _read_json(path):
+    try:
+        return json.loads(path.read_bytes(), object_pairs_hook=pairs)
+    except Exception:
+        raise StageError("malformed_workspace_evidence") from None
+
+
+def _expected_from_source(handoff):
+    _, document = admit(encoded(handoff).decode())
+    period = document["period"]
+    start_text = str(period["start"])
+    from datetime import datetime, timezone
+
+    start = datetime.fromisoformat(start_text.replace("Z", "+00:00"))
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    end = start + _duration(period["duration"])
+    hot = "hotfile_" + end.strftime("%Y%m%dT%H%M%S") + ".txt"
+    grid = document["config"]["cgrid"]["grid"]
+    duration = _duration(period["duration"]).total_seconds() / 3600
+    interval = _duration(period["interval"]).total_seconds() / 3600
+    if interval <= 0 or duration % interval:
+        raise StageError("unsupported_workspace_profile")
+    time_count = int(duration / interval) + 1
+    return {
+        "netcdf": ["swangrid.nc", "swanspec.nc"],
+        "files": ["swantable.txt", hot],
+        "dimensions": {
+            "swangrid.nc": {
+                "time": time_count,
+                "yc": int(grid["my"]) + 1,
+                "xc": int(grid["mx"]) + 1,
+            },
+            "swanspec.nc": {
+                "points": len(document["config"]["output"]["points"]["xp"]),
+                "time": time_count,
+                "frequency": 35,
+                "direction": 36,
+            },
+        },
+    }
+
+
+def _duration(value):
+    match = re.fullmatch(r"(\d+)([dhms])", str(value))
+    if not match:
+        raise StageError("unsupported_workspace_profile")
+    from datetime import timedelta
+
+    number, unit = int(match.group(1)), match.group(2)
+    return timedelta(
+        **{
+            "d": {"days": number},
+            "h": {"hours": number},
+            "m": {"minutes": number},
+            "s": {"seconds": number},
+        }[unit]
+    )
+
+
+def _validate_native(root):
+    manifest_path = root / "evidence/native-inputs.json"
+    ledger_path = root / "native-inputs.sha256"
+    if (
+        manifest_path.is_symlink()
+        or ledger_path.is_symlink()
+        or not manifest_path.is_file()
+        or not ledger_path.is_file()
+    ):
+        raise StageError("missing_native_ledger")
+    native = _read_json(manifest_path)
+    if manifest_path.read_bytes() != encoded(native):
+        raise StageError("noncanonical_native_manifest")
+    if not isinstance(native, dict) or any(
+        not _safe_native_path(k)
+        or not isinstance(v, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", v)
+        for k, v in native.items()
+    ):
+        raise StageError("malformed_native_manifest")
+    rows = {}
+    try:
+        for line in ledger_path.read_text(encoding="ascii").splitlines():
+            match = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
+            if (
+                not match
+                or not _safe_native_path(match.group(2))
+                or match.group(2) in rows
+            ):
+                raise ValueError
+            rows[match.group(2)] = match.group(1)
+    except Exception:
+        raise StageError("malformed_native_ledger") from None
+    expected_ledger = "".join(
+        f"{sha}  {name}\n" for name, sha in sorted(native.items())
+    )
+    if rows != native or ledger_path.read_text(encoding="ascii") != expected_ledger:
+        raise StageError("native_ledgers_disagree")
+    required = {
+        str(STAGING / "INPUT"),
+        "evidence/configuration-handoff.json",
+        "evidence/generation-runtime.json",
+        "evidence/generation-profile.json",
+    }
+    if (root / "evidence/configuration-request.json").exists():
+        required.add("evidence/configuration-request.json")
+    if not required.issubset(native):
+        raise StageError("missing_mandatory_native_input")
+    actual = set()
+    for path in tree(root / STAGING):
+        actual.add(str(path.relative_to(root)))
+    output_names = {"PRINT", "Errfile", "swangrid.nc", "swanspec.nc", "swantable.txt"}
+    expected_outputs = json.loads(MANIFEST.read_bytes())["expected_outputs"]
+    output_names.update(expected_outputs["files"])
+    output_names.update(expected_outputs["netcdf"])
+    actual = {name for name in actual if Path(name).name not in output_names}
+    expected = actual | required
+    if set(native) != expected:
+        raise StageError("native_input_coverage")
+    for name, sha in native.items():
+        path = root / name
+        if path.is_symlink() or not path.is_file() or digest(path.read_bytes()) != sha:
+            raise StageError("native_inputs_changed")
+    return native
+
+
 def verify(source, report):
-    """Read expected outputs after SWAN, never fetch data or rerun a model."""
+    """Independently verify versioned provenance, native inputs and outputs."""
     root = Path(source).absolute()
     tree(root)
-    native = json.loads((root / "evidence/native-inputs.json").read_bytes())
-    for name, expected in native.items():
-        path = (root / name).resolve()
+    native = _validate_native(root)
+    profile = _read_json(root / "evidence/generation-profile.json")
+    keys = {
+        "contract",
+        "version",
+        "profile_id",
+        "profile_version",
+        "source_sha256",
+        "model_json_sha256",
+        "runtime_sha256",
+        "expected_outputs",
+    }
+    if (
+        not isinstance(profile, dict)
+        or set(profile) != keys
+        or profile["contract"] != "rompy-prax-generation-profile"
+        or type(profile["version"]) is not int
+        or profile["version"] != 2
+        or profile["profile_id"] != "reference-fixed-v1"
+        or profile["profile_version"] != 1
+    ):
+        raise StageError("unsupported_workspace_version")
+    handoff_bytes = (root / "evidence/configuration-handoff.json").read_bytes()
+    handoff, document = admit(handoff_bytes.decode())
+    if "evidence/configuration-request.json" in native:
+        request_bytes = (root / "evidence/configuration-request.json").read_bytes()
+        request, _ = admit(request_bytes.decode())
         if (
-            not path.is_relative_to(root)
-            or path.is_symlink()
-            or not path.is_file()
-            or digest(path.read_bytes()) != expected
+            request["configuration"] != handoff["configuration"]
+            or handoff["validation"].get("status") != "accepted"
         ):
-            raise StageError("native_inputs_changed")
-    profile = json.loads(MANIFEST.read_bytes())["expected_outputs"]
+            raise StageError("provenance_mismatch")
+    facts = _read_json(root / "evidence/generation-runtime.json")
+    validation = handoff.get("validation", {})
+    fact_keys = {
+        "python",
+        "packages",
+        "sources_sha256",
+        "adapter_sha256",
+        "profile_module_sha256",
+        "profile_id",
+        "profile_version",
+    }
+    if (
+        not isinstance(facts, dict)
+        or set(facts) != fact_keys
+        or not all(
+            isinstance(facts.get(key), str)
+            and re.fullmatch(r"[0-9a-f]{64}", facts[key])
+            for key in ("adapter_sha256", "profile_module_sha256")
+        )
+        or profile["source_sha256"] != handoff["configuration"]["content_sha256"]
+        or profile["model_json_sha256"] != handoff["configuration"]["model_json_sha256"]
+        or profile["runtime_sha256"] != digest(encoded(facts))
+        or facts.get("profile_id") != profile["profile_id"]
+        or facts.get("profile_version") != profile["profile_version"]
+        or validation.get("runtime") != facts
+    ):
+        raise StageError("provenance_mismatch")
+    expected = _expected_from_source(handoff)
+    if not same(profile["expected_outputs"], expected):
+        raise StageError("output_expectations_mismatch")
     staging = root / STAGING
     if (staging / "Errfile").is_file() and (staging / "Errfile").stat().st_size:
         raise StageError("swan_error_file")
-    for name in ["PRINT", *profile["files"], *profile["netcdf"]]:
+    for name in ["PRINT", *expected["files"], *expected["netcdf"]]:
         path = staging / name
         if not path.is_file() or not path.stat().st_size:
             raise StageError("missing_model_outputs")
     import xarray as xr
 
     dimensions = {}
-    for name in profile["netcdf"]:
-        with xr.open_dataset(staging / name, engine="netcdf4") as dataset:
-            if (
-                not dataset.data_vars
-                or not dataset.sizes
-                or any(size == 0 for size in dataset.sizes.values())
-            ):
-                raise StageError("empty_model_outputs")
-            dataset.load()
-            dimensions[name] = dict(dataset.sizes)
+    for name in expected["netcdf"]:
+        try:
+            with xr.open_dataset(staging / name, engine="netcdf4") as dataset:
+                dataset.load()
+                actual_dims = dict(dataset.sizes)
+                if not dataset.data_vars or actual_dims != expected["dimensions"][name]:
+                    raise StageError("output_dimensions_mismatch")
+                dimensions[name] = actual_dims
+        except StageError:
+            raise
+        except Exception:
+            raise StageError("unreadable_model_outputs") from None
     output = Path(report)
     output.mkdir(parents=True, exist_ok=False)
     result = {
         "phase": "verified",
         "netcdf_dimensions": dimensions,
+        "profile_id": profile["profile_id"],
+        "source_sha256": profile["source_sha256"],
+        "model_json_sha256": profile["model_json_sha256"],
+        "runtime_sha256": profile["runtime_sha256"],
         "scope": "Output completeness/readability and unchanged native inputs, not scientific validity.",
     }
     result["files"] = {
