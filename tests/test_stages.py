@@ -152,7 +152,12 @@ def test_generation_publishes_complete_workspace_only_after_checks(
         assert mandatory in native
     profile = json.loads((output / "evidence/generation-profile.json").read_bytes())
     assert profile["contract"] == "rompy-prax-generation-profile"
+    assert profile["version"] == 2
     assert profile["profile_id"] == "reference-fixed-v1"
+    assert profile["expected_outputs"]["dimensions"] == {
+        "swangrid.nc": {"time": 25, "yc": 25, "xc": 15},
+        "swanspec.nc": {"points": 3, "time": 25, "frequency": 35, "direction": 36},
+    }
     for name, sha in native.items():
         assert stages.digest((output / name).read_bytes()) == sha
     assert not list(tmp_path.glob("rompy-preparing-*"))
@@ -259,7 +264,13 @@ def test_verification_reads_all_outputs_and_rejects_missing_or_changed(
 
     class Dataset:
         data_vars = {"hs": True}
-        sizes = {"time": 25, "x": 3}
+
+        def __init__(self, path):
+            self.sizes = (
+                {"time": 25, "yc": 25, "xc": 15}
+                if Path(path).name == "swangrid.nc"
+                else {"points": 3, "time": 25, "frequency": 35, "direction": 36}
+            )
 
         def __enter__(self):
             return self
@@ -271,10 +282,285 @@ def test_verification_reads_all_outputs_and_rejects_missing_or_changed(
             reads.append(True)
 
     monkeypatch.setitem(
-        sys.modules, "xarray", SimpleNamespace(open_dataset=lambda *_a, **_k: Dataset())
+        sys.modules,
+        "xarray",
+        SimpleNamespace(open_dataset=lambda path, **_k: Dataset(path)),
     )
     result = stages.verify(root, tmp_path / "report")
     assert result["phase"] == "verified" and len(reads) == 2
     (root / stages.STAGING / "INPUT").write_bytes(b"modified")
     with pytest.raises(stages.StageError, match="native_inputs_changed"):
         stages.verify(root, tmp_path / "another")
+
+
+def test_verifier_fails_closed_when_input_row_is_omitted(
+    monkeypatch, handoff, tmp_path
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    (root / stages.STAGING / "INPUT").write_bytes(b"changed control")
+    manifest = json.loads((root / "evidence/native-inputs.json").read_bytes())
+    del manifest[str(stages.STAGING / "INPUT")]
+    (root / "evidence/native-inputs.json").write_bytes(stages.encoded(manifest))
+    with pytest.raises(stages.StageError):
+        stages.verify(root, tmp_path / "report")
+
+
+def test_verifier_requires_matching_dual_ledgers(monkeypatch, handoff, tmp_path):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    (root / "native-inputs.sha256").write_text("")
+    with pytest.raises(stages.StageError, match="native_ledgers_disagree"):
+        stages.verify(root, tmp_path / "report")
+
+
+def test_verifier_loads_synthetic_netcdf_and_rejects_wrong_dimensions(
+    monkeypatch, handoff, tmp_path
+):
+    import numpy as np
+    import xarray as xr
+    import dask as real_dask
+    import dask.config
+
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    monkeypatch.setitem(sys.modules, "dask", real_dask)
+    for name in ("PRINT", "swantable.txt", "hotfile_20230102T000000.txt"):
+        (root / stages.STAGING / name).write_text("synthetic fixture output")
+    grid = xr.Dataset({"depth": (("time", "yc", "xc"), np.ones((25, 25, 15)))})
+    spec = xr.Dataset(
+        {"hs": (("points", "time", "frequency", "direction"), np.ones((3, 25, 35, 36)))}
+    )
+    grid.to_netcdf(root / stages.STAGING / "swangrid.nc", engine="scipy")
+    spec.to_netcdf(root / stages.STAGING / "swanspec.nc", engine="scipy")
+    assert stages.verify(root, tmp_path / "report")["phase"] == "verified"
+    wrong = xr.Dataset({"depth": (("time", "yc", "xc"), np.ones((25, 25, 14)))})
+    wrong.to_netcdf(root / stages.STAGING / "swangrid.nc", engine="scipy")
+    loaded = []
+
+    class WrongDataset:
+        data_vars = {"depth": True}
+        sizes = {"time": 25, "yc": 25, "xc": 14}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def load(self):
+            loaded.append(True)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "xarray",
+        SimpleNamespace(open_dataset=lambda *_a, **_k: WrongDataset()),
+    )
+    with pytest.raises(stages.StageError, match="output_dimensions_mismatch"):
+        stages.verify(root, tmp_path / "wrong-report")
+    assert loaded == []
+
+
+@pytest.mark.parametrize(
+    "bad_name", ["../escape", "/absolute", "STAGING//INPUT", "STAGING/./INPUT"]
+)
+def test_verifier_rejects_unsafe_manifest_paths(
+    monkeypatch, handoff, tmp_path, bad_name
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    native_path = root / "evidence/native-inputs.json"
+    native = json.loads(native_path.read_bytes())
+    native[bad_name] = "a" * 64
+    native_path.write_bytes(stages.encoded(native))
+    with pytest.raises(stages.StageError):
+        stages.verify(root, tmp_path / "report")
+
+
+def test_verifier_requires_both_ledgers(monkeypatch, handoff, tmp_path):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    (root / "native-inputs.sha256").unlink()
+    with pytest.raises(stages.StageError, match="missing_native_ledger"):
+        stages.verify(root, tmp_path / "report")
+
+
+def _add_synthetic_outputs(root):
+    expected = stages._expected_from_source(
+        stages._read_json(root / "evidence/configuration-handoff.json")
+    )
+    for name in ["PRINT", *expected["files"], *expected["netcdf"]]:
+        (root / stages.STAGING / name).write_bytes(b"synthetic, not a SWAN result")
+
+    class Dataset:
+        data_vars = {"hs": True}
+
+        def __init__(self, path):
+            self.sizes = expected["dimensions"][Path(path).name]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def load(self):
+            pass
+
+    return SimpleNamespace(open_dataset=lambda path, **_k: Dataset(path))
+
+
+def test_known_postrun_swan_auxiliaries_are_optional_exact_paths(
+    monkeypatch, handoff, tmp_path
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    _add_synthetic_outputs(root)
+    for name in ("norm_end", "swaninit", "swangrid.nc.dum"):
+        (root / stages.STAGING / name).write_bytes(b"synthetic auxiliary")
+    monkeypatch.setitem(sys.modules, "xarray", _add_synthetic_outputs(root))
+    assert stages.verify(root, tmp_path / "report")["phase"] == "verified"
+
+
+def test_nested_output_basename_is_not_an_output_exemption(
+    monkeypatch, handoff, tmp_path
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    _add_synthetic_outputs(root)
+    (root / stages.STAGING / "unlisted" / "PRINT").parent.mkdir()
+    (root / stages.STAGING / "unlisted" / "PRINT").write_bytes(b"nested")
+    monkeypatch.setitem(sys.modules, "xarray", _add_synthetic_outputs(root))
+    with pytest.raises(stages.StageError, match="native_input_coverage"):
+        stages.verify(root, tmp_path / "report")
+
+
+def test_legacy_common_runtime_mismatch_is_refused(monkeypatch, handoff, tmp_path):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    handoff_path = root / "evidence/configuration-handoff.json"
+    legacy = json.loads(handoff_path.read_bytes())
+    legacy["validation"]["runtime"]["python"] = "different-python"
+    handoff_path.write_bytes(stages.encoded(legacy))
+    native_path = root / "evidence/native-inputs.json"
+    native = json.loads(native_path.read_bytes())
+    native["evidence/configuration-handoff.json"] = stages.digest(
+        handoff_path.read_bytes()
+    )
+    native_path.write_bytes(stages.encoded(native))
+    (root / "native-inputs.sha256").write_text(
+        "".join(f"{sha}  {name}\n" for name, sha in sorted(native.items()))
+    )
+    with pytest.raises(stages.StageError, match="provenance_mismatch"):
+        stages.verify(root, tmp_path / "report")
+
+
+@pytest.mark.parametrize("prior_runtime", [None, [], "broken", True, 7])
+def test_legacy_runtime_wrong_type_is_controlled(
+    monkeypatch, handoff, tmp_path, prior_runtime
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    handoff_path = root / "evidence/configuration-handoff.json"
+    legacy = json.loads(handoff_path.read_bytes())
+    legacy["validation"]["runtime"] = prior_runtime
+    handoff_path.write_bytes(stages.encoded(legacy))
+    native_path = root / "evidence/native-inputs.json"
+    native = json.loads(native_path.read_bytes())
+    native["evidence/configuration-handoff.json"] = stages.digest(
+        handoff_path.read_bytes()
+    )
+    native_path.write_bytes(stages.encoded(native))
+    (root / "native-inputs.sha256").write_text(
+        "".join(f"{sha}  {name}\n" for name, sha in sorted(native.items()))
+    )
+    with pytest.raises(stages.StageError, match="provenance_mismatch"):
+        stages.verify(root, tmp_path / "report")
+
+
+def test_nonfinite_native_manifest_is_a_controlled_error(
+    monkeypatch, handoff, tmp_path
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    path = root / "evidence/native-inputs.json"
+    manifest = json.loads(path.read_bytes())
+    manifest[str(stages.STAGING / "INPUT")] = float("nan")
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(stages.StageError, match="malformed_workspace_evidence"):
+        stages.verify(root, tmp_path / "report")
+
+
+def test_legacy_handoff_keeps_original_bytes_and_common_fact_compatibility(
+    monkeypatch, handoff, tmp_path
+):
+    fake_generator(monkeypatch, handoff)
+    incoming = json.loads(raw(handoff))
+    incoming["validation"]["runtime"].update(
+        validator_sha256="f" * 64,
+        distributions={"legacy-validator": "independent"},
+    )
+    incoming["validation"]["runtime_id"] = stages.digest(
+        stages.encoded(incoming["validation"]["runtime"])
+    )
+    original = raw(incoming).encode()
+    root = tmp_path / "run"
+    stages.generate(original.decode(), root)
+    assert (root / "evidence/configuration-handoff.json").read_bytes() == original
+    _add_synthetic_outputs(root)
+    monkeypatch.setitem(sys.modules, "xarray", _add_synthetic_outputs(root))
+    assert stages.verify(root, tmp_path / "report")["phase"] == "verified"
+
+
+def test_verifier_rejects_boolean_profile_version(monkeypatch, handoff, tmp_path):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    profile_path = root / "evidence/generation-profile.json"
+    profile = json.loads(profile_path.read_bytes())
+    profile["profile_version"] = True
+    profile_path.write_bytes(stages.encoded(profile))
+    native_path = root / "evidence/native-inputs.json"
+    native = json.loads(native_path.read_bytes())
+    native["evidence/generation-profile.json"] = stages.digest(
+        profile_path.read_bytes()
+    )
+    native_path.write_bytes(stages.encoded(native))
+    (root / "native-inputs.sha256").write_text(
+        "".join(f"{sha}  {name}\n" for name, sha in sorted(native.items()))
+    )
+    with pytest.raises(stages.StageError, match="unsupported_workspace_version"):
+        stages.verify(root, tmp_path / "report")
+
+
+def test_verifier_refuses_legacy_workspace_contract_version(
+    monkeypatch, handoff, tmp_path
+):
+    fake_generator(monkeypatch, handoff)
+    root = tmp_path / "run"
+    stages.generate(raw(handoff), root)
+    profile_path = root / "evidence/generation-profile.json"
+    profile = json.loads(profile_path.read_bytes())
+    profile["version"] = 1
+    profile_path.write_bytes(stages.encoded(profile))
+    native_path = root / "evidence/native-inputs.json"
+    native = json.loads(native_path.read_bytes())
+    native["evidence/generation-profile.json"] = stages.digest(
+        profile_path.read_bytes()
+    )
+    native_path.write_bytes(stages.encoded(native))
+    (root / "native-inputs.sha256").write_text(
+        "".join(f"{sha}  {name}\n" for name, sha in sorted(native.items()))
+    )
+    with pytest.raises(stages.StageError, match="unsupported_workspace_version"):
+        stages.verify(root, tmp_path / "report")
